@@ -1,24 +1,35 @@
 thisFolder = "/python-programming/Spaceship game/"
 import pygame # pygame renderer for 2D
 import math
-#import numpy # for tuple math
+import numpy # for tuple math
 import time
 import random
 
 def getCurrentMillisecondTime():
     return round(time.time() * 1000)
 
-"""
-# enter a chance and if number between 1-100. Chance input is intended to be a decimal less than 1. Chance is timesed by 100. Returns true if success, false if not 
-def getRandomChanceResult(chance : float) -> bool:
-    randomNum = random.randint(1,100)
-    chance = chance * 100.0
-    if(chance <= randomNum):
-        return True
-    else:
-        return False
-"""
+# Angles are in radians, rotation is counter-clockwise and done around origin (0,0)
+# https://stackoverflow.com/questions/2259476/rotating-a-point-about-another-point-2d
+def rotate2DVector(vectorToRotate : tuple, angle) -> tuple:
+    oldX = vectorToRotate[0]
+    oldY = vectorToRotate[1]
+    newCoord = (oldX * math.cos(angle) - oldY * math.sin(angle),
+                oldX * math.sin(angle) + oldY * math.cos(angle))
     
+    return newCoord
+
+# Takes in two 2D tuples (x,y). Angles are in radians, rotation is counter-clockwise
+def rotate2DVectorAroundPoint(vectorToRotate : tuple, pointToRotateAround : tuple, angle : float) -> tuple:
+    #Subtract pivot point
+    noPoint = numpy.subtract(vectorToRotate, pointToRotateAround)
+
+    #Rotate vector
+    rotatedNoPoint = rotate2DVector(noPoint,angle)
+
+    # add back pivot
+    finalPoint = numpy.add(rotatedNoPoint, pointToRotateAround)
+
+    return finalPoint
 
 # Create Direction emnum
 class Direction(): 
@@ -76,11 +87,13 @@ class Direction():
             return "south-east"
         elif(inputDirecion == Direction.southWest):
             return "south-west"
+        elif(inputDirecion == Direction.none):
+            return "none"
 
 # make controls enum
-class controls():
+class Controls():
     WASD = 1
-    arrowKeys = 2
+    #arrowKeys = 2
 
 pygame.init()
 screenSize = 719 # will be two sets of screen size, a square
@@ -94,6 +107,7 @@ class GameController():
     end = False # end the game bool
     endReason : str = "" # Reason for ending
     gameEndedTextFontSize = 64
+    
 
     # Ends a game
     def EndGame(self, reason : str):
@@ -204,14 +218,18 @@ class GameMap():
 class PlayerController():
     size : tuple = (5,15) # tuple of real coords, first value is width between base and second is height
     playerPosition : tuple = None # the positions of the player, starting from bottom-left
-    currentDirection : int = Direction.north # the current Direction of snake, as int. Default to up
+    currentDirection : int = Direction.none # the current Direction of snake, as int. Default to up
     colour = (116, 149, 189)
     screen : pygame.surface = None # initalise
     gameMap = None # initialise
     killsTextPadding = (10,10) # Padding pixels from top-left to give tjhe length text
     killsTextFontSize = 32 # font size of the length text
-    playerSpeed : int = 5 # how many pixels the player moves per frame
+    playerSpeed : int = 10 # how many pixels the player moves per frame
     colour = (255,255,255) # The colour of the player
+    kills = 0 # how many total kills the player has
+    hitbox : pygame.rect = None # just a rect, does not hold the render. Updated on .Render()
+    hitboxColour = (151, 236, 239) # For debugging
+    #hitboxOutlineSize = 3 # For debugging, width of outline in pixels
 
     # constrcutor must have screen and GameMap and tilesiaze arg
     def __init__(self,screen : pygame.surface, game : GameController, tileSize : int ) -> None:
@@ -224,6 +242,10 @@ class PlayerController():
         if (startLocation[1] > 0 and startLocation[1] % 2 == 0 ): # if even and positive on y
             startLocation = (startLocation[0],startLocation[1] - self.size[1]//2) # same location - height on y
         self.playerPosition = startLocation # set it is start
+        width = self.size[0]
+        height = self.size[1]
+        hitbox = pygame.Rect(startLocation[0], startLocation[1] - height, width, height) # do - height because canvas is top left based
+        self.hitbox = hitbox
         # -- More init
         self.tileSize = tileSize
         self.screen = screen
@@ -244,7 +266,17 @@ class PlayerController():
             newPlayerPos = (lastPlayerPosition[0] + playerSpeed, lastPlayerPosition[1])
         elif(currentDirection == Direction.west): # moved left
             newPlayerPos = (lastPlayerPosition[0] - playerSpeed, lastPlayerPosition[1])
+            #Diagonal direction. Divide by 2 from the addittion of movement on each axis to avoid 2 x speed movement
 
+        elif(currentDirection == Direction.northWest): # moved up-left
+            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((-1 * playerSpeed,-1 * playerSpeed), 2))
+        elif(currentDirection == Direction.northEast): # moved up-right
+            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((playerSpeed,-1 * playerSpeed), 2))
+        elif(currentDirection == Direction.southEast): # moved down right
+            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((playerSpeed,playerSpeed), 2))
+        elif(currentDirection == Direction.southWest): # moved down left
+            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((-1*playerSpeed,playerSpeed), 2))
+        
         self.playerPosition = newPlayerPos # set new pos 
 
     # must be called each frame, displays the character
@@ -268,21 +300,118 @@ class PlayerController():
         playerPoints = [] # list of real coords
         playerPoints.append((playerPosition)) # start at bottom-left
         playerPoints.append((playerPosition[0] + playerWidth, playerPosition[1])) # create bottom-right
-        playerPoints.append((playerPosition[0]/2,playerPosition[1]+playerHeight)) # create top
+        playerPoints.append((playerPosition[0] + playerWidth/2,playerPosition[1]-playerHeight)) # create top
+        midPoint = (playerPosition[0] + playerWidth / 2, playerPosition[1] - playerHeight / 2) # centre of triangle
+
+        playerDirectionAngle = 0 # default or pointing North. In degrees cos they're easier to read
+
+        # No Need to do north. Keep in mind the angle is is counter-clockwise
+        if(self.currentDirection == Direction.east):
+            playerDirectionAngle = 90
+        elif(self.currentDirection == Direction.south):
+            playerDirectionAngle = 180
+        elif(self.currentDirection == Direction.west):
+            playerDirectionAngle = 270
+        elif(self.currentDirection == Direction.northEast):
+            playerDirectionAngle = 45
+        elif(self.currentDirection == Direction.northWest):
+            playerDirectionAngle = 315 # 270 + 45
+        elif(self.currentDirection == Direction.southEast):
+            playerDirectionAngle = 135 # 180 - 45
+        elif(self.currentDirection == Direction.southWest):
+            playerDirectionAngle = 225 # 180 + 45
+        
+        #if not 0
+        if(playerDirectionAngle != 0):
+            # convert direction angle to radians
+            playerDirectionAngle = math.radians(playerDirectionAngle)
+
+            # iterate through player points
+            for playerPointIndex in range(0,len(playerPoints)):
+                playerPoint = playerPoints[playerPointIndex] # Get point
+                playerPointRotated : tuple = rotate2DVectorAroundPoint(playerPoint, midPoint, playerDirectionAngle)
+
+                playerPointRounded : tuple = ((round(playerPointRotated[0]), round(playerPointRotated[1])))
+
+                playerPoints[playerPointIndex] = playerPointRounded
+
+        # update hitbox
+        
+        # get left-most X and lowest Y. Lowest Y because smaller Y means higher.
+        # highest x and y is used for size
+        leftMostX = None # intialise
+        rightMostX = None # initialise
+        lowestY = None # initialise
+        highestY = None # initialise
+
+        #index = 0
+        for point in playerPoints:
+            #initialise x
+            if leftMostX == None:
+                leftMostX = point[0]
+            if rightMostX  == None:
+                rightMostX = 0
+            #initialise y
+            if lowestY == None:
+                lowestY = point[1] 
+            if highestY == None:
+                highestY = 0
+            # if point x less than existing point and y is higher
+            
+            
+            if (point[0] < leftMostX):
+                leftMostX = point[0]
+            if (point[0] > rightMostX):
+                rightMostX = point[0]
+            if (point[1] < lowestY):
+                lowestY = point[1] # set as new point, new one fouund
+            if (point[1] > highestY):
+                highestY = point[1]
+            #index += 1
+        
+        # update hitbox rect
+        #print(leftAndHighestMostPoint)
+        
+        hitboxSize = (rightMostX - leftMostX, highestY - lowestY)
+
+        """
+        # Debuggin stuff
+        print("-------")
+        print("Player pos:")
+        print(playerPosition)
+        print("Hitbox size: ")
+        print(hitboxSize)
+        print("Hitbox position: ")
+        print((leftMostX, lowestY))
+        print("Right most x and highest y")
+        print("("+str(rightMostX)+", "+str(highestY)+")")
+        print("Spaceship points")
+        print(playerPoints)
+        """
+        
+        self.hitbox = pygame.Rect(leftMostX, lowestY, hitboxSize[0],hitboxSize[1])
+        
+        #print(playerPoints)
         pygame.draw.polygon(screen, colour, playerPoints)
 
-        
+    # for debugging purposes
+    def RenderHitbox(self) -> None:
+        screen = self.screen
+        hitbox = self.hitbox # a rect
+        hitboxColour = self.hitboxColour
+
+        pygame.draw.rect(screen, hitboxColour, hitbox)
             
     # renders text on top-left
     def RenderKillsText(self) -> None:
         killsTextFontSize = self.killsTextFontSize
-        killsText = "Kills: "+str(self.length) # string text to render
+        killsText = "Kills: "+str(self.kills) # string text to render
         killsTextObject = pygame.font.SysFont("Arial Nova",killsTextFontSize)
         killsTextSurface = killsTextObject.render(killsText, True, "white")
-        padding = self.lengthTextPadding
+        padding = self.killsTextPadding
         killsTextlocation = (padding[0],padding[1]) # top left (0,0) + padding. (0,0) can be omitted
         self.screen.blit(killsTextSurface, killsTextlocation) # render text to screen
-        pass
+        
 
         
     lastDirectionChangeTime = 0 # in millis
@@ -292,23 +421,18 @@ class PlayerController():
         if(type(moveDirection) != int):
             raise Exception("ERROR: Didn't pass in an int")
 
-        # check for going back in opposite directopm
-        if(Direction.getOppositeDirection(self.currentDirection) != moveDirection and self.currentDirection != moveDirection):
-            # move snake
-            # print(Direction.DirectionToString(Direction.getOppositeDirection(self.currentDirection)))
-            # print(Direction.DirectionToString(moveDirection))
-            self.currentDirection = moveDirection
-        else:    
-            print("WARN: Tried to go in opposite Direction with snake or same Direction allready going")
-            pass
-        return
+        
+        
+        # move snake
+        # print(Direction.DirectionToString(Direction.getOppositeDirection(self.currentDirection)))
+        # print(Direction.DirectionToString(moveDirection))
+        self.currentDirection = moveDirection
+            
     
     lastMoveTime = 0 # in millis
 
     # returns True if success, does not render. Intended to be called each frame
     def Update(self) -> bool:#, render = True, screen : pygame.surface = None, tileSize : int = None):
-        #print(self.snakeTilePositions)
-        self.CheckIfSnakeIsTouchingSelf() # check
 
         # Check if enough time has passed
         currentTimeInMilliseconds = getCurrentMillisecondTime()
@@ -329,160 +453,6 @@ class PlayerController():
 
 
 # controls all fruit on map
-class FruitController():
-
-    fruitLocations = [] # Real fruit coords
-    fruitLengthReward = 1 # how much length a snake gains for eating a fruit
-    screen : pygame.surface = None
-    gameMap : GameMap = None
-    fruitColour = (241,74,74) # in rgb 
-    amnountOfFruitPerLevel = 1 # how much much fruit is the amnt per level
-    amnountOfFruitEatenThisLevel : int = 0 # How much fruit has been eaten this level
-    loadedFruitsForLevel : int = 0 # 0 means no loaded level. It means what level was the last fruit load
-    game  : GameController = None 
-
-    # Consrecutor
-    def __init__(self, screen : pygame.surface, gameMap : GameMap, game : GameController) -> None:
-        self.screen = screen
-        self.gameMap = gameMap
-        self.game = game
-
-    # Returns a list of the fruit positions turned into tiles
-    def getFruitPosTiles(self) -> list: 
-        endList = [] # init
-        for realPos in self.fruitLocations:
-            endList.append(GameMap.realToTileCoords(realPos, tileSize))
-        return endList
-
-    # delete fruit will delete the fruit automatically
-    def checkIfSnakeTouchingFruit(self, inputSnake : snake, deleteFruit: bool = True) -> bool:
-        fruitTiles = self.getFruitPosTiles() # Get fruits as tiles
-        snakeTiles = inputSnake.GetSnakePosTiles() # Get snake as tiles
-        if snakeTiles[len(snakeTiles)-1] in fruitTiles: # check for a match with leading end of snake tile and all fruit tiles
-            if(deleteFruit == True):
-                fruitTileIndex = fruitTiles.index(snakeTiles[len(snakeTiles)-1]) # get fruit tile index
-                self.fruitLocations.pop(fruitTileIndex)
-            return True
-
-    #spawns a fruit on the map, really just stores positional data. You need to render all fruits to see changes. Pass in tiee coords. not real ones
-    def SpawnFruit(self, fruitTilePosition : tuple) -> bool:
-        realTilePosition = GameMap.tileCoordsToReal(fruitTilePosition, tileSize)
-        self.fruitLocations.append(realTilePosition)
-
-    # Updates fruits, intended to be called each frame
-    def updateFruits(self, inputSnake: snake)-> None:
-
-        #screen = self.screen
-        gameMap = self.gameMap
-        #tileSize = gameMap.tileSize
-
-        snakeIsTouchingFruit = self.checkIfSnakeTouchingFruit(playerSnake, True) # delet fruit automatcally
-
-        amnountOfFruitPerLevel = self.amnountOfFruitPerLevel
-
-        if(snakeIsTouchingFruit == True):
-            playerSnake.length += self.fruitLengthReward
-            self.amnountOfFruitEatenThisLevel += 1 # ate one fruit
-
-        if(self.amnountOfFruitEatenThisLevel == amnountOfFruitPerLevel):
-            game.level += 1 # increment level by 1
-            self.amnountOfFruitEatenThisLevel = 0 # reset amount of fruits eaten per level
-            print("Moving to next level:"+str(game.level))
-        elif(self.amnountOfFruitEatenThisLevel > amnountOfFruitPerLevel):
-            print("WARN: The player ate more fruits than allowed for level")
-
-        # get range of tiles not in snake
-        generationRanges = [] # each list in the list is a range (tuple) where fruits can generate. If empty list they can't generate in this row
-        snakeTiles = inputSnake.GetSnakePosTiles()
-        # fruitTiles = self.getFruitPosTiles()
-        # generate lists for each row
-        gameMap.UpdateRows(screenSizeX=screenSize, screenSizeY=screenSize) # if rows have not been calculated
-        totalRows = gameMap.rows # Get total possible rows as an int
-        rowSize = gameMap.rowSize # How many tiles there r per row
-        
-
-        if(self.loadedFruitsForLevel != game.level):
-            for rowIndex in range(0,totalRows):
-                if(not (rowIndex == 1 or rowIndex == totalRows)):
-                    rowRanges : list = [] # intialise the row ranges
-                    rowDoesIntersectWithSnake = False
-                    firstIntersectRecorded = True # bool of whether the first ineterse
-                    # loop throuugh columns of row
-                    lastColumnIntersect = 1 # initialised, the column of intersect 
-                    for columnIndex in range(0, rowSize+1): # range exclusive
-                        tempTile = (rowIndex, columnIndex)
-                        nextTile = (rowIndex, columnIndex + 1) # next tile, it is handled if last column
-                        interesctingColumn : int = columnIndex # init
-                        if (tempTile in snakeTiles ):
-                            interesctingColumn = columnIndex
-                            rowDoesIntersectWithSnake = True
-                            lastColumnIntersect = interesctingColumn
-                            
-                        if(columnIndex == rowSize): #  last index
-                            interesctingColumn = columnIndex
-                            if (lastColumnIntersect+1 != rowSize and (columnIndex == 1 or columnIndex == rowSize)): # if last intersecting column + 1 is not the end 
-                                rowRanges.append((lastColumnIntersect+1,rowSize))
-                            # else, leave list empty
-                        elif((not (nextTile in snakeTiles)) and (tempTile in snakeTiles)): # not last column and next tile is not intersecting and this column  is intersectingg
-                            if(firstIntersectRecorded == True): # if first recorded intersect
-                                firstIntersectRecorded = False
-                                rowRanges.append((1, interesctingColumn-1)) # start at 1
-                            else: # not first
-                                rowRanges.append((lastColumnIntersect+1, interesctingColumn-1)) # from last intersect to current
-                        
-                        
-                    # Row doesn't intersect with snake
-                    # print(rowDoesIntersectWithSnake)
-                    if(rowDoesIntersectWithSnake == False):
-                        rowRanges = [(1,rowSize)]
-
-                    generationRanges.append(rowRanges) # add a list for each row
-
-                """
-                willRowSpawnFruit = getRandomChanceResult(self.fruitSpawnChance)
-
-                if(willRowSpawnFruit):
-                    #choose a random range
-                    rowRangeLength = len(endList) # length of list of elements in row range list. W
-                    chosenRowRange : tuple = endList[random.randint(0,rowRangeLength - 1)] # a tuple of potential ranges
-                    fruitTilePosition = (rowIndex, random.randint(chosenRowRange[0],chosenRowRange[1])) # the  chosen tile for fruit'
-                    self.SpawnFruit(fruitTilePosition) # add the fruit to map
-                """
-                # end of row for loop
-            
-            # all of the chosen row indexes 
-            chosenRowindexes = [] 
-
-            #range is eclusive
-            for index in range(0, amnountOfFruitPerLevel):
-                #choose a random range
-                genRangesLength = len(generationRanges)
-                chosenRowIndex = random.randint(0, genRangesLength - 1)
-                chosenRowindexes.append(chosenRowIndex)
-
-            # loop thru all rows
-            for chosenRowIndex in chosenRowindexes: 
-                rowRangeList = generationRanges[chosenRowIndex]
-                rowRangeLength = len(rowRangeList) # length of list of elements in row range list. W
-                chosenRowRange : tuple = rowRangeList[random.randint(0,rowRangeLength - 1)] # a tuple of potential ranges
-                fruitTilePosition = (chosenRowIndex, random.randint(chosenRowRange[0],chosenRowRange[1])) # the chosen tile for fruit'
-                self.SpawnFruit(fruitTilePosition) # add the fruit to map
-
-
-            self.loadedFruitsForLevel = game.level # finally set loaded fruits        
-            
-
-    # Render all fruits on the map
-    def renderFruits(self) -> None:
-        for realFruitPosition in self.fruitLocations:        
-            fruitRect = pygame.Rect(realFruitPosition[0], realFruitPosition[1], tileSize, tileSize)
-            # print("drawing a rect")
-            pygame.draw.rect(screen, self.fruitColour, fruitRect)
-
-        #print("---Gen range start---")
-        #print(generationRange)
-        #print("---Gen range end---")
-        
 
 tileSize = 20
 gameMap = GameMap(tileSize)
@@ -499,18 +469,36 @@ realCoords = (GameMap.tileCoordsToReal(tileCoords, tileSize))
 print(realCoords)
 player = PlayerController(screen, gameMap, tileSize)
 #fruitController = FruitController(screen, gameMap, game)
-gameControls = controls.WASD
+gameControls = Controls.WASD
 
 def handlePlayerMovement(moveDirection : int):
     print("Moving in Direction " + Direction.DirectionToString(moveDirection))
-    playerSnake.ChangeDirection(moveDirection) # type checking is done in function
+    player.currentDirection = moveDirection
+    player.ChangeDirection(moveDirection) # type checking is done in function
+
+playerMovementKeysDown = {} # which keys are pressed down. Each key corresponds to index and vaalue is bool
+
+"""
+# Fills the movement keys dictionary with Falses
+def fillMovementKeys():
+    if(gameControls == Controls.WASD):
+        # if pressed, is True
+        if(pygame.K_w not in playerMovementKeysDown): # check if key exists
+            playerMovementKeysDown[pygame.K_w] = False
+        if(pygame.K_a not in playerMovementKeysDown):
+            playerMovementKeysDown[pygame.K_a] = False
+        if(pygame.K_s not in playerMovementKeysDown):
+            playerMovementKeysDown[pygame.K_s] = False
+        if(pygame.K_d not in playerMovementKeysDown):
+            playerMovementKeysDown[pygame.K_d] = False
+"""
+
+
 
 # Handle key down, pass in the pressed key event as input. Is oj
-def hanldKeysDown(event: pygame.event) -> None:
+def handleKeysDown() -> None:
     print("Called key down function") # Is only called once regardless of keys down
     
-    if (not (type(event) == pygame.event.Event and type(event.type == pygame.KEYDOWN))):
-        raise Exception("Didn't pass in pygame event object which is a key down event.type")
     
     keysPressed = pygame.key.get_pressed()
 
@@ -519,8 +507,26 @@ def hanldKeysDown(event: pygame.event) -> None:
     AtLeastOneKeyPressed = False
 
     # if controls are wasd
-    if(gameControls == controls.WASD):
+    if(gameControls == Controls.WASD):
+
         # if pressed, is True
+        if(pygame.K_w in playerMovementKeysDown): # check if key exists
+            playerMovementKeysDown[pygame.K_w] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_w] = False
+        if(pygame.K_a in playerMovementKeysDown):
+            playerMovementKeysDown[pygame.K_a] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_a] = False
+        if(pygame.K_s in playerMovementKeysDown):
+            playerMovementKeysDown[pygame.K_s] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_s] = False
+        if(pygame.K_d in playerMovementKeysDown):
+            playerMovementKeysDown[pygame.K_d] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_d] = False
+        
         wState = keysPressed[pygame.K_w]
         aState = keysPressed[pygame.K_a]
         sState = keysPressed[pygame.K_s]
@@ -532,58 +538,86 @@ def hanldKeysDown(event: pygame.event) -> None:
         if(wState == True):
             totalPressed += 1
             moveDirection = Direction.north
+            # if not found or is found but not down
+            keyFound = pygame.K_w in playerMovementKeysDown
+            if(keyFound == False or (keyFound == True and playerMovementKeysDown[pygame.K_w] == False)):
+                playerMovementKeysDown[pygame.K_w] = True
         if(aState == True):
             totalPressed += 1
-            moveDirection = Direction.left
+            moveDirection = Direction.west
+            keyFound = pygame.K_a in playerMovementKeysDown
+            if(keyFound == False or (keyFound == True and playerMovementKeysDown[pygame.K_a] == False)):
+                playerMovementKeysDown[pygame.K_a] = True
         if(sState == True):
             totalPressed += 1
-            moveDirection = Direction.down
+            moveDirection = Direction.south
+            keyFound = pygame.K_s in playerMovementKeysDown
+            if(keyFound == False or (keyFound == True and playerMovementKeysDown[pygame.K_s] == False)):
+                playerMovementKeysDown[pygame.K_s] = True
         if(dState == True):
             totalPressed += 1
-            moveDirection = Direction.right
+            moveDirection = Direction.east
+            keyFound = pygame.K_d in playerMovementKeysDown
+            if(keyFound == False or (keyFound == True and playerMovementKeysDown[pygame.K_d] == False)):
+                playerMovementKeysDown[pygame.K_d] = True
 
-        if(totalPressed > 1):
-            print("WARN: More than one movement key pressed, skipping")
-            return
+        if(totalPressed == 2):
+            # check for north-west etc.
+
+            if(wState == True and aState ==  True):
+                moveDirection = Direction.northWest
+            if(wState == True and dState ==  True):
+                moveDirection = Direction.northEast
+            if(sState == True and aState == True):
+                moveDirection = Direction.southWest
+            if(sState == True and dState == True):
+                moveDirection = Direction.southEast
         if (totalPressed > 0):
             AtLeastOneKeyPressed = True
-            
-    # if controls are arrow keys
-    elif(gameControls == controls.arrowKeys):
-        # if pressed, is True
-        upState = keysPressed[pygame.K_UP]
-        downState = keysPressed[pygame.K_DOWN]
-        leftState = keysPressed[pygame.K_LEFT]
-        rightState = keysPressed[pygame.K_RIGHT]
-
-        # check if more than 1 are pressed
-        totalPressed = 0
-
-        if(upState == True):
-            totalPressed += 1
-            moveDirection = Direction.north
-        if(downState == True):
-            totalPressed += 1
-            moveDirection = Direction.down
-        if(leftState == True):
-            totalPressed += 1
-            moveDirection = Direction.left
-        if(rightState == True):
-            totalPressed += 1
-            moveDirection = Direction.right
-
-        if(totalPressed > 1):
-            print("WARN: More than one movement key pressed, skipping")
-            return
-        if (totalPressed > 0):
-            AtLeastOneKeyPressed = True
-    if(AtLeastOneKeyPressed == True):
+        
+    if(AtLeastOneKeyPressed == True and moveDirection != player.currentDirection):
         handlePlayerMovement(moveDirection)
         
-"""      
-def handleKeyUp(event: pygame.event) -> None:
-    pass
-"""
+def handleKeyUp(event: pygame.event.Event = None) -> None:
+    playerMovementKeysEnum = gameControls
+    keysUp = [] # what keys were pressed up, expressed as indexes
+    if(playerMovementKeysEnum == Controls.WASD):
+        # Check what key was unpressed
+        keys = pygame.key.get_pressed() # get state of all keys
+        
+        #fillMovementKeys() # update the movement key states recorded
+        # if key unpressed and (last state key exists and last state was down)
+        if(keys[pygame.K_w] == False and playerMovementKeysDown[pygame.K_w] == True):
+            keysUp.append(pygame.K_w)
+            playerMovementKeysDown[pygame.K_w] = False # ser new value of False
+        if(keys[pygame.K_a] == False and playerMovementKeysDown[pygame.K_a] == True):
+            keysUp.append(pygame.K_a)
+            playerMovementKeysDown[pygame.K_a] = False # ser new value of False
+        if(keys[pygame.K_s] == False and playerMovementKeysDown[pygame.K_s] == True):
+            keysUp.append(pygame.K_s)
+            playerMovementKeysDown[pygame.K_s] = False # ser new value of False
+        if(keys[pygame.K_d] == False and playerMovementKeysDown[pygame.K_d] == True):
+            keysUp.append(pygame.K_d)
+            playerMovementKeysDown[pygame.K_d] = False # ser new value of False
+
+    # qtyKeysUp = len(keysUp) # quantity 
+    keysDown = [] # list of keys down
+     
+    for keyDownIndex in playerMovementKeysDown.keys():
+        keyDownValue = playerMovementKeysDown[keyDownIndex]
+        if(keyDownValue == True):
+            keysDown.append(keyDownIndex) # append pygame index
+    
+    qtyKeysDown = len(keysDown) # quantity
+    if(qtyKeysDown == 0): # stop moving
+        handlePlayerMovement(Direction.none)
+    if(qtyKeysDown > 0): # still might be moving
+        handleKeysDown() # keep moving if still keys down
+        
+
+        
+    
+
 # Handle key up, pass in the pressed key event as input
 while running:
     # fill screen with dark grey
@@ -596,19 +630,21 @@ while running:
             print("Got quit event")
             running = False
         elif event.type == pygame.KEYDOWN: # handle key down
-            hanldKeysDown(event) # pass in key event and call func
-        #elif event.type == pygame.KEYUP: # handle key up
-            #handleKeyUp(event) # pass in key event
+            handleKeysDown() # pass in key event and call func
+        elif event.type == pygame.KEYUP: # handle key up
+            handleKeyUp() # pass in key event
 
     if(game.end == False):
         player.Update() # update the snake and move if enough time has passed. Func retunrs True if success
     # render snake below text in case player decides to go under text
-    player.ren()
+    player.Render()
+    player.RenderHitbox() # debugging
     if(game.end == False):
-        fruitController.updateFruits(playerSnake)
-    fruitController.renderFruits()
+        pass
+        #fruitController.updateFruits(playerSnake)
+    #fruitController.renderFruits()
     if(game.end == False):
-        playerSnake.RenderLengthText()
+        player.RenderKillsText()
     else: # ended ==  True
         game.RenderEndGame(screen) 
 
@@ -616,7 +652,7 @@ while running:
     # flip() the display to put your work on screen
     pygame.display.flip()
     
-    clock.tick(75)  # limits FPS 
+    clock.tick(150)  # limits FPS 
 
 print("closing")
 pygame.quit()
