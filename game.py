@@ -251,33 +251,47 @@ class PlayerController():
         self.screen = screen
         self.game = game
 
-    # move the player in self.currentDirection 
-    def MoveInCurrentDirection(self) -> None:
-        currentDirection = self.currentDirection
+    # takes in real coords of a positio n
+    def IsOutOfScreenBounds(self , desiredPosition : tuple) -> bool:
+        screenSize = screen.get_size()
+        return (desiredPosition[0] < 0 or desiredPosition[0] > screenSize[0] or desiredPosition[1] < 0 or desiredPosition[1] > screenSize[1])
+
+    # returns real coords of a move in direction if it were to happen
+    def getSimulatedMoveInDirection(self,moveDirection : int) -> tuple:
         lastPlayerPosition : tuple = self.playerPosition
         playerSpeed : int = self.playerSpeed # how many pixels per movement
         newPlayerPos : tuple = lastPlayerPosition
 
-        if(currentDirection == Direction.north): # moved up
+        if(moveDirection == Direction.north): # moved up
             newPlayerPos = (lastPlayerPosition[0], lastPlayerPosition[1] - playerSpeed)
-        elif(currentDirection == Direction.south): # moved down
+        elif(moveDirection == Direction.south): # moved down
             newPlayerPos = (lastPlayerPosition[0], lastPlayerPosition[1] + playerSpeed)
-        elif(currentDirection == Direction.east): # moved right
+        elif(moveDirection == Direction.east): # moved right
             newPlayerPos = (lastPlayerPosition[0] + playerSpeed, lastPlayerPosition[1])
-        elif(currentDirection == Direction.west): # moved left
+        elif(moveDirection == Direction.west): # moved left
             newPlayerPos = (lastPlayerPosition[0] - playerSpeed, lastPlayerPosition[1])
             #Diagonal direction. Divide by 2 from the addittion of movement on each axis to avoid 2 x speed movement
 
-        elif(currentDirection == Direction.northWest): # moved up-left
+        elif(moveDirection == Direction.northWest): # moved up-left
             newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((-1 * playerSpeed,-1 * playerSpeed), 2))
-        elif(currentDirection == Direction.northEast): # moved up-right
+        elif(moveDirection == Direction.northEast): # moved up-right
             newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((playerSpeed,-1 * playerSpeed), 2))
-        elif(currentDirection == Direction.southEast): # moved down right
+        elif(moveDirection == Direction.southEast): # moved down right
             newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((playerSpeed,playerSpeed), 2))
-        elif(currentDirection == Direction.southWest): # moved down left
+        elif(moveDirection == Direction.southWest): # moved down left
             newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((-1*playerSpeed,playerSpeed), 2))
+
+        return newPlayerPos # return new pos 
+
+
+    # move the player in self.currentDirection 
+    def MoveInCurrentDirection(self) -> None:
+        currentDirection = self.currentDirection
+        newPosition = self.getSimulatedMoveInDirection(currentDirection)
+        # screenSize = screen.get_size()
         
-        self.playerPosition = newPlayerPos # set new pos 
+        if(not self.IsOutOfScreenBounds(newPosition)):
+            self.playerPosition = newPosition # set new pos 
 
     # must be called each frame, displays the character
     def Render(self) -> None:
@@ -638,7 +652,7 @@ while running:
         player.Update() # update the snake and move if enough time has passed. Func retunrs True if success
     # render snake below text in case player decides to go under text
     player.Render()
-    player.RenderHitbox() # debugging
+    # player.RenderHitbox() # debugging
     if(game.end == False):
         pass
         #fruitController.updateFruits(playerSnake)
