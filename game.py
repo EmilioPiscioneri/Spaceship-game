@@ -270,16 +270,15 @@ class PlayerController():
             newPlayerPos = (lastPlayerPosition[0] + playerSpeed, lastPlayerPosition[1])
         elif(moveDirection == Direction.west): # moved left
             newPlayerPos = (lastPlayerPosition[0] - playerSpeed, lastPlayerPosition[1])
-            #Diagonal direction. Divide by 2 from the addittion of movement on each axis to avoid 2 x speed movement
-
+            # Diagonal direction. 
         elif(moveDirection == Direction.northWest): # moved up-left
-            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((-1 * playerSpeed,-1 * playerSpeed), 2))
+            newPlayerPos = numpy.add(lastPlayerPosition, (-1 * playerSpeed,-1 * playerSpeed))
         elif(moveDirection == Direction.northEast): # moved up-right
-            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((playerSpeed,-1 * playerSpeed), 2))
+            newPlayerPos = numpy.add(lastPlayerPosition, (playerSpeed,-1 * playerSpeed))
         elif(moveDirection == Direction.southEast): # moved down right
-            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((playerSpeed,playerSpeed), 2))
+            newPlayerPos = numpy.add(lastPlayerPosition, (playerSpeed,playerSpeed))
         elif(moveDirection == Direction.southWest): # moved down left
-            newPlayerPos = numpy.add(lastPlayerPosition, numpy.divide((-1*playerSpeed,playerSpeed), 2))
+            newPlayerPos = numpy.add(lastPlayerPosition, (-1*playerSpeed,playerSpeed))
 
         return newPlayerPos # return new pos 
 
