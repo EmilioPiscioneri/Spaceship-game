@@ -103,11 +103,16 @@ running = True
 movePlayerDelay = 100 # how many milliseconds between each player move  
 
 class GameController():
-    level = 1 # what level the game is on 
+    level = 1 # what level the game is on. Start at 1 
     end = False # end the game bool
     endReason : str = "" # Reason for ending
     gameEndedTextFontSize = 64
-    
+    gameMap : object = None
+    screen : pygame.surface.Surface = None
+
+    def __init__(self, gameMap : object, screen : pygame.surface.Surface) -> None:
+        self.gameMap = gameMap
+        self.screen = screen
 
     # Ends a game
     def EndGame(self, reason : str):
@@ -115,7 +120,8 @@ class GameController():
         self.endReason = reason
 
     # Renders the end game text and reason
-    def RenderEndGame(self, screen : pygame.surface.Surface) -> None:
+    def RenderEndGame(self) -> None:
+        screen = self.screen
         screenSizeXY : tuple = screen.get_size()
         # Render dark screen with alpha
         alphaSurface = pygame.Surface((screenSizeXY[0], screenSizeXY[1])) # width and height must be a tuple
@@ -230,6 +236,8 @@ class PlayerController():
     hitbox : pygame.rect = None # just a rect, does not hold the render. Updated on .Render()
     hitboxColour = (151, 236, 239) # For debugging
     #hitboxOutlineSize = 3 # For debugging, width of outline in pixels
+    hp = 300 # health
+    directionBeforeRest : int = None # intended to be set before direction.none is made current direction
 
     # constrcutor must have screen and GameMap and tilesiaze arg
     def __init__(self,screen : pygame.surface, game : GameController, tileSize : int ) -> None:
@@ -242,6 +250,7 @@ class PlayerController():
         if (startLocation[1] > 0 and startLocation[1] % 2 == 0 ): # if even and positive on y
             startLocation = (startLocation[0],startLocation[1] - self.size[1]//2) # same location - height on y
         self.playerPosition = startLocation # set it is start
+        self.gameMap = game.gameMap
         width = self.size[0]
         height = self.size[1]
         hitbox = pygame.Rect(startLocation[0], startLocation[1] - height, width, height) # do - height because canvas is top left based
@@ -305,7 +314,10 @@ class PlayerController():
             raise Exception("ERROR: didn't pass a valid tileSize arg")
         playerPosition = self.playerPosition # position of player
         colour = self.colour # colour of player
-        
+        playerDirection = self.currentDirection
+        if(playerDirection == Direction.none and self.directionBeforeRest != None):
+            playerDirection = self.directionBeforeRest # set it to direction before stop
+
         playerWidth = self.size[0]
         playerHeight = self.size[1]
         
@@ -319,19 +331,19 @@ class PlayerController():
         playerDirectionAngle = 0 # default or pointing North. In degrees cos they're easier to read
 
         # No Need to do north. Keep in mind the angle is is counter-clockwise
-        if(self.currentDirection == Direction.east):
+        if(playerDirection == Direction.east):
             playerDirectionAngle = 90
-        elif(self.currentDirection == Direction.south):
+        elif(playerDirection == Direction.south):
             playerDirectionAngle = 180
-        elif(self.currentDirection == Direction.west):
+        elif(playerDirection == Direction.west):
             playerDirectionAngle = 270
-        elif(self.currentDirection == Direction.northEast):
+        elif(playerDirection == Direction.northEast):
             playerDirectionAngle = 45
-        elif(self.currentDirection == Direction.northWest):
+        elif(playerDirection == Direction.northWest):
             playerDirectionAngle = 315 # 270 + 45
-        elif(self.currentDirection == Direction.southEast):
+        elif(playerDirection == Direction.southEast):
             playerDirectionAngle = 135 # 180 - 45
-        elif(self.currentDirection == Direction.southWest):
+        elif(playerDirection == Direction.southWest):
             playerDirectionAngle = 225 # 180 + 45
         
         #if not 0
@@ -433,15 +445,22 @@ class PlayerController():
         # type check
         if(type(moveDirection) != int):
             raise Exception("ERROR: Didn't pass in an int")
+        
+        # save the old direction
+        oldDirection = self.currentDirection
+        print("Old direction: "+Direction.DirectionToString(oldDirection))
+        if(moveDirection == Direction.none):
+            self.directionBeforeRest = self.currentDirection
 
-        
-        
         # move snake
         # print(Direction.DirectionToString(Direction.getOppositeDirection(self.currentDirection)))
         # print(Direction.DirectionToString(moveDirection))
         self.currentDirection = moveDirection
             
-    
+    #convert real coords of pos to tile
+    def GetPositionAsTile(self) -> tuple:
+        return GameMap.realToTileCoords(self.playerPosition, self.gameMap.tileSize)
+
     lastMoveTime = 0 # in millis
 
     # returns True if success, does not render. Intended to be called each frame
@@ -463,13 +482,260 @@ class PlayerController():
 
         return True
     
+# Spawn enemies and control them
+class EnemyController():
+    lastLevelLoaded = 0 # the last level with enemies that is loaded
+    game : GameController = None
+    maxEnemiesPerlevel = 8
+    enemyPositions = []
+    player : PlayerController = None
+    sizeXY : int = 15 # size of a single enemy
+    enemyColour = (252, 29, 54)
+
+    def __init__(self, game : GameController, player : PlayerController) -> None:
+        self.game = game
+        self.player = player
+
+    # Spawmn a singular enemy
+    def SpawnEnemy(self, enemyPosition):
+        realTilePosition = GameMap.tileCoordsToReal(enemyPosition, self.game.gameMap.tileSize)
+        self.enemyPositions.append(realTilePosition)
+    
+    """
+    # get a rect of potential enemy location as tile coords
+    def GetEnemyTileRect(self, realPosition) -> tuple:
+        return GameMap.realToTileCoords(realPosition, self.game.gameMap.tileSize)
+    """
+        
+    # get a list of all enemy locations as tile coords not using self.enemyPositions
+    def GetEnemyTileRects(self, realTilePositions : list) -> list:
+        enemyRects = []
+        sizeXY = self.sizeXY
+        for enemyPosition in realTilePositions:
+            position = GameMap.realToTileCoords(enemyPosition)
+            enemyRects.append(pygame.Rect(position[0],-1 * position[1], sizeXY,sizeXY))
+        return enemyRects
+    
+
+    def GenerateEnemies(self, qtyToGenerate):
+        qtyToGenerate = round(qtyToGenerate) # Make sure it is a whole number
+        game : GameController = self.game
+        gameMap : GameMap = game.gameMap
+        playerPosAsTile = player.GetPositionAsTile() # player position as tile coord
+        screenSize = game.screen.get_size()
+
+        if(qtyToGenerate != 0):
+            # iterate through generation
+            for generationIndex in range(0, qtyToGenerate):
+                # get range of tiles not in players
+                generationRanges = [] # each list in the list is a range (tuple) where objects can generate. If empty list they can't generate in this row
+                totalRows = gameMap.rows # Get total possible rows as an int
+                rowSize = gameMap.rowSize # How many tiles there r per row
+                if(totalRows == 0):
+                    gameMap.UpdateRows(screenSize[0], screenSize[1])
+                if(totalRows == 0): # still zero despire being updated
+                    return 
+                for rowIndex in range(0,totalRows):
+                    if(not (rowIndex == 1 or rowIndex == totalRows)):
+                        rowRanges : list = [] # intialise the row ranges
+                        generatedEnemyTiles : list = [] # list of enemy tiles as tuples
+                        rowDoesIntersectWithPlayer = False
+                        firstIntersectRecorded = False # bool of whether the first ineterse
+                        # loop throuugh columns of row
+                        lastColumnIntersect = 1 # initialised, the column of intersect 
+                        for columnIndex in range(0, rowSize+1): # range exclusive
+                            iteratedTile = (rowIndex, columnIndex)
+                            nextTile = (rowIndex, columnIndex + 1) # next tile, it is handled if last column
+                            interesctingColumn : int = columnIndex # init
+                            
+                            interesctingColumn = columnIndex
+                            
+                            if (iteratedTile == playerPosAsTile):
+                                interesctingColumn = columnIndex
+                                rowDoesIntersectWithPlayer = True
+                                lastColumnIntersect = interesctingColumn
+                            if(columnIndex == rowSize and not (iteratedTile in generatedEnemyTiles)): #  last index
+                                interesctingColumn = columnIndex
+                                firstIntersectRecorded = True
+                                lastColumnIntersect = interesctingColumn # record the last intersect
+                                if (lastColumnIntersect+1 != rowSize and (columnIndex == 1 or columnIndex == rowSize)): # if last intersecting column + 1 is not the end 
+                                    rowRanges.append((lastColumnIntersect+1,rowSize))
+                                    lastColumnIntersect = interesctingColumn # record as intersect so other math makes sense
+                                # else, leave list empty
+                            elif(((nextTile != iteratedTile) and (iteratedTile != playerPosAsTile))): # check for intersection 
+                                if(firstIntersectRecorded == True): # if first recorded intersect
+                                    firstIntersectRecorded = False
+                                    rowRanges.append((1, interesctingColumn-1)) # start at 1
+                                else: # not first
+                                    rowRanges.append((lastColumnIntersect+1, interesctingColumn-1)) # from last intersect to current
+                            elif((iteratedTile in generatedEnemyTiles)): # handle enemy tile is the same as previously generated tile 
+                            
+                            
+                        # Row doesn't intersect with snake
+                        # print(rowDoesIntersectWithSnake)
+                        if(rowDoesIntersectWithPlayer == False):
+                            rowRanges = [(1,rowSize)]
+
+                        generationRanges.append(rowRanges) # add a list for each row
+
+                    # end of row for loop
+                
+                # all of the chosen row indexes 
+                chosenRowindexes = [] 
+
+                #range is eclusive. Index is useless
+                for index in range(0, qtyToGenerate):
+                    #choose a random range
+                    genRangesLength = len(generationRanges)
+                    chosenRowIndex = random.randint(0, genRangesLength - 1)
+                    chosenRowindexes.append(chosenRowIndex)
+
+                # loop thru all rows
+                for chosenRowIndex in chosenRowindexes: 
+                    rowRangeList = generationRanges[chosenRowIndex]
+                    rowRangeLength = len(rowRangeList) # length of list of elements in row range list. W
+                    chosenRowRange : tuple = rowRangeList[random.randint(0,rowRangeLength - 1)] # a tuple of potential ranges
+                    enemyTilePosition = (chosenRowIndex, random.randint(chosenRowRange[0],chosenRowRange[1])) # the chosen tile for fruit'
+                    self.SpawnEnemy(enemyTilePosition) # add the fruit to map
+
+                
+
+                game = self.game
+                currentLevel = game.level # get level
+                self.lastLevelLoaded = currentLevel # finally set loaded objects
+
+    def RenderEnemies(self):
+        playerPosition : tuple = player.playerPosition # real player position
+        playerSize = player.size
+        enemySize = self.sizeXY
+        enemyWidth = enemySize
+        enemyHeight = enemySize
+        enemyColour = self.enemyColour
+ 
+        for enemyPositon in self.enemyPositions:
+            # enemy position is in real coords
+            tempPosRect = pygame.Rect(enemyPositon[0] - enemyWidth, enemyPositon[1] - enemyHeight, enemyWidth, enemyHeight)
+            pygame.draw.rect(self.game.screen, enemyColour, tempPosRect)
+
+            """
+            enemyPoints = [] # a list of enemy points to render as polygon
+            enemyPoints.append(enemyPositon) # bottom-left position
+            enemyPoints.append((enemyPositon[0]+enemyWidth, enemyPositon[1])) # bottom-right
+            enemyPoints.append((enemyPositon[0]+enemyWidth / 2, enemyPositon[1] - enemyHeight)) # top
+            enemyMidPoint = (enemyPositon[0] + enemyWidth / 2, enemyPositon[1] - enemyHeight / 2)
+
+            enemyPointAngle = 0 # default tp 0 for now
+            playerMidPoint = (playerPosition[0] + playerSize[0]/2, playerPosition[1] - playerSize[1]/2) # midpoint, goal to point towards
+            enemyTriTop = enemyPoints[2] # the top of enemy triangle
+            playerTriTop = (playerPosition[0] + playerSize[0]/2, playerPosition[1] - playerSize[1])
+
+            radiusOfEnemyTriangle = enemyHeight / 2 
+
+            # check for intersect with imaginary circle around enemy and player midpoint, remember we want the enemy to point towards player, that is goal
+            # There can't be a situation where there isn't an intersect
+
+            # Search circle equation to find
+
+            # Check if the sqrt part is positive. You can't square root negative numbers in the real plane (idk if u can in complex).
+            # y will check for x intercept and x  for y. See my graph https://www.desmos.com/calculator/yjvgt7htmo
+
+            # draw an imaginary line from player top to midpoint of enemy.
+            # See my graph https://www.desmos.com/calculator/uh0fcsw30b
+            # get the slope between the two points
+            slope = 1 # default to 0
+            if((enemyMidPoint[0] - playerMidPoint[0] != 0) and (enemyMidPoint[1] - playerMidPoint[1] != 0)):
+                slope = (enemyMidPoint[1] - playerMidPoint[1]) / (enemyMidPoint[0] - playerMidPoint[0])
+            yIntercept = playerMidPoint[1]-(slope*playerMidPoint[0])
+
+
+            print("--------") 
+
+            # I did math by hand but I still have ataxia so it's not the best, I'm also from Vicroia, Melbourne so I draw my p weird because that's the correct local spelling
+            yBottomHalfPreSqrtResult = -1 * (pow(radiusOfEnemyTriangle, 2) - pow(enemyMidPoint[1], 2))
+            yTopHalfPreSqrtResult = -1 * yBottomHalfPreSqrtResult
+            
+            if(yBottomHalfPreSqrtResult > 0):
+                print(((math.sqrt(yBottomHalfPreSqrtResult))*slope)+yIntercept )
+            if(yTopHalfPreSqrtResult > 0):
+                print(((math.sqrt(yTopHalfPreSqrtResult))*slope)+yIntercept )
+
+            finishedEquationY = None # init. Going to be a number, likely a float
+            if(yBottomHalfPreSqrtResult >= 0 or yTopHalfPreSqrtResult >= 0): # positive or 0, there is an intersection
+                posPreSqrtResult = None # init. Going to be a number, likely a float
+                # get which one is positive
+                if(yBottomHalfPreSqrtResult > 0 or abs(yBottomHalfPreSqrtResult) == 0):
+                    posPreSqrtResult = yBottomHalfPreSqrtResult
+                elif(yTopHalfPreSqrtResult > 0 or yTopHalfPreSqrtResult == 0):
+                    posPreSqrtResult = yTopHalfPreSqrtResult
+                
+                finishedEquationY = ((math.sqrt(posPreSqrtResult))*slope)+yIntercept 
+            else:
+                print("neither y pre sqrt is above 0")
+            
+            # do the same for x
+            xBottomHalfPreSqrtResult = -1 * (pow(radiusOfEnemyTriangle, 2) - pow(enemyMidPoint[0], 2))
+            xTopHalfPreSqrtResult =  -1 * xBottomHalfPreSqrtResult
+            xResult1 = 0
+            xResult2 = 0
+
+            print("-------")
+            if(xBottomHalfPreSqrtResult > 0):
+                print(((math.sqrt(xBottomHalfPreSqrtResult))-yIntercept)/slope )
+            if(xTopHalfPreSqrtResult > 0):
+                print(((math.sqrt(xTopHalfPreSqrtResult))-yIntercept)/slope)
+
+            finishedEquationX = None # init. Going to be a number, likely a float
+            if(xBottomHalfPreSqrtResult >= 0 or xTopHalfPreSqrtResult >= 0): # positive or 0, there is an intersection
+                posPreSqrtResult = None # init. Going to be a number, likely a float
+                # get which one is positive
+                if(xBottomHalfPreSqrtResult > 0 or abs(xBottomHalfPreSqrtResult) == 0):
+                    posPreSqrtResult = xBottomHalfPreSqrtResult
+                elif(xTopHalfPreSqrtResult > 0 or xTopHalfPreSqrtResult == 0):
+                    posPreSqrtResult = xTopHalfPreSqrtResult
+                
+                finishedEquationX = ((math.sqrt(posPreSqrtResult))-yIntercept)/slope 
+            else:
+                print("neither X pre sqrt is above 0")
+                
+
+            #print(yBottomHalfPreSqrtResult > 0)
+            #print(yTopHalfPreSqrtResult > 0)
+            
+            if(math.isnan(finishedEquationX) == True):
+                finishedEquationX = 0
+                print("Got x as nan, defaulted to 0")
+            if(math.isnan(finishedEquationY) == True):
+                finishedEquationY = 0
+                print("Got y as nan, defaulted to 0")
+            finalPoint = numpy.add((finishedEquationX, finishedEquationY), (0,0))#(enemyTriTop))
+            
+            print(finalPoint)
+            pygame.draw.circle(screen, "red", finalPoint, 3)
+            print(playerPosition[1] > finishedEquationY)
+            print(enemyPositon)
+            """
+
+
+
+    def Update(self):
+        game : GameController = self.game
+        lastLevelLoaded = self.lastLevelLoaded
+        currentLevel = game.level
+        maxEnemiesPerlevel = self.maxEnemiesPerlevel
+
+        # If last level is not the same as curerent level
+        if(lastLevelLoaded != currentLevel):
+            # Determine how many enemies to generate
+            qtyToGenerate = min(maxEnemiesPerlevel, currentLevel) # cap out at 10 enemies
+             # Spawn enemies
+            self.GenerateEnemies(qtyToGenerate)
 
 
 # controls all fruit on map
 
 tileSize = 20
 gameMap = GameMap(tileSize)
-game = GameController()
+game = GameController(gameMap, screen)
 
 if (gameMap.errorOnCreation):
     print("!! There was an error creating the map !!")
@@ -480,13 +746,13 @@ tileCoords = GameMap.realToTileCoords(inpCoords, tileSize)
 print(tileCoords)
 realCoords = (GameMap.tileCoordsToReal(tileCoords, tileSize))
 print(realCoords)
-player = PlayerController(screen, gameMap, tileSize)
+player = PlayerController(screen, game, tileSize)
+enemyController = EnemyController(game, player)
 #fruitController = FruitController(screen, gameMap, game)
 gameControls = Controls.WASD
 
 def handlePlayerMovement(moveDirection : int):
     print("Moving in Direction " + Direction.DirectionToString(moveDirection))
-    player.currentDirection = moveDirection
     player.ChangeDirection(moveDirection) # type checking is done in function
 
 playerMovementKeysDown = {} # which keys are pressed down. Each key corresponds to index and vaalue is bool
@@ -576,15 +842,30 @@ def handleKeysDown() -> None:
 
         if(totalPressed == 2):
             # check for north-west etc.
-
             if(wState == True and aState ==  True):
                 moveDirection = Direction.northWest
+                key = (pygame.K_w, pygame.K_a) # keys to achieve dierction
+                keyFound = (key in playerMovementKeysDown) # check for existence of array
+                if(keyFound == False or (keyFound == True and playerMovementKeysDown[key] == (False,False))):
+                    playerMovementKeysDown[key] = (True, True)
             if(wState == True and dState ==  True):
                 moveDirection = Direction.northEast
+                key = (pygame.K_w, pygame.K_d) # keys to achieve dierction
+                keyFound = (key in playerMovementKeysDown) # check for existence of array
+                if(keyFound == False or (keyFound == True and playerMovementKeysDown[key] == (False,False))):
+                    playerMovementKeysDown[key] = (True, True)
             if(sState == True and aState == True):
                 moveDirection = Direction.southWest
+                key = (pygame.K_s, pygame.K_a) # keys to achieve dierction
+                keyFound = (key in playerMovementKeysDown) # check for existence of array
+                if(keyFound == False or (keyFound == True and playerMovementKeysDown[key] == (False,False))):
+                    playerMovementKeysDown[key] = (True, True)
             if(sState == True and dState == True):
                 moveDirection = Direction.southEast
+                key = (pygame.K_s, pygame.K_d) # keys to achieve dierction
+                keyFound = (key in playerMovementKeysDown) # check for existence of array
+                if(keyFound == False or (keyFound == True and playerMovementKeysDown[key] == (False,False) )):
+                    playerMovementKeysDown[key] = (True, True)
         if (totalPressed > 0):
             AtLeastOneKeyPressed = True
         
@@ -598,28 +879,38 @@ def handleKeyUp(event: pygame.event.Event = None) -> None:
         # Check what key was unpressed
         keys = pygame.key.get_pressed() # get state of all keys
         
-        #fillMovementKeys() # update the movement key states recorded
-        # if key unpressed and (last state key exists and last state was down)
-        if(keys[pygame.K_w] == False and playerMovementKeysDown[pygame.K_w] == True):
-            keysUp.append(pygame.K_w)
-            playerMovementKeysDown[pygame.K_w] = False # ser new value of False
-        if(keys[pygame.K_a] == False and playerMovementKeysDown[pygame.K_a] == True):
-            keysUp.append(pygame.K_a)
-            playerMovementKeysDown[pygame.K_a] = False # ser new value of False
-        if(keys[pygame.K_s] == False and playerMovementKeysDown[pygame.K_s] == True):
-            keysUp.append(pygame.K_s)
-            playerMovementKeysDown[pygame.K_s] = False # ser new value of False
-        if(keys[pygame.K_d] == False and playerMovementKeysDown[pygame.K_d] == True):
-            keysUp.append(pygame.K_d)
-            playerMovementKeysDown[pygame.K_d] = False # ser new value of False
+        #iterate through keys
+        for keyDownIndex in playerMovementKeysDown.keys():
+            keyDownValue = playerMovementKeysDown[keyDownIndex]
+            #fillMovementKeys() # update the movement key states recorded
+            # if key unpressed and (last state key exists and last state was down)
+            if(type(keyDownIndex) != list and keys[pygame.K_w] == False and playerMovementKeysDown[pygame.K_w] == True):
+                keysUp.append(pygame.K_w)
+                playerMovementKeysDown[pygame.K_w] = False # ser new value of False
+            if(type(keyDownIndex) != list and keys[pygame.K_a] == False and playerMovementKeysDown[pygame.K_a] == True):
+                keysUp.append(pygame.K_a)
+                playerMovementKeysDown[pygame.K_a] = False # ser new value of False
+            if(type(keyDownIndex) != list and keys[pygame.K_s] == False and playerMovementKeysDown[pygame.K_s] == True):
+                keysUp.append(pygame.K_s)
+                playerMovementKeysDown[pygame.K_s] = False # ser new value of False
+            if(type(keyDownIndex) != list and keys[pygame.K_d] == False and playerMovementKeysDown[pygame.K_d] == True):
+                keysUp.append(pygame.K_d)
+                playerMovementKeysDown[pygame.K_d] = False # ser new value of False
+            if(type(keyDownIndex) == list and keys[keyDownIndex[0]] == False and keys[keyDownIndex[1] == False and playerMovementKeysDown[keyDownIndex[0]]] == True and playerMovementKeysDown[keyDownIndex[1]] == True): # if index is a list of combinations of number
+                keysUp.append(keyDownIndex[0])
+                keysUp.append(keyDownIndex[1])
+                playerMovementKeysDown[keyDownIndex][0] = False # index by list and set
+                playerMovementKeysDown[keyDownIndex][1] = False
 
     # qtyKeysUp = len(keysUp) # quantity 
     keysDown = [] # list of keys down
      
     for keyDownIndex in playerMovementKeysDown.keys():
         keyDownValue = playerMovementKeysDown[keyDownIndex]
-        if(keyDownValue == True):
+        if((type(keyDownIndex) != list) and keyDownValue == True):
             keysDown.append(keyDownIndex) # append pygame index
+        elif((type(keyDownIndex) == list) and keyDownValue[0] == True and keyDownValue[1] == True):
+            keysDown.append(keyDownIndex) # append pygame indexes
     
     qtyKeysDown = len(keysDown) # quantity
     if(qtyKeysDown == 0): # stop moving
@@ -648,9 +939,11 @@ while running:
             handleKeyUp() # pass in key event
 
     if(game.end == False):
-        player.Update() # update the snake and move if enough time has passed. Func retunrs True if success
+        player.Update() # update the player and move if enough time has passed. Func retunrs True if success
+        enemyController.Update()
     # render snake below text in case player decides to go under text
     player.Render()
+    enemyController.RenderEnemies()
     # player.RenderHitbox() # debugging
     if(game.end == False):
         pass
@@ -659,7 +952,7 @@ while running:
     if(game.end == False):
         player.RenderKillsText()
     else: # ended ==  True
-        game.RenderEndGame(screen) 
+        game.RenderEndGame() 
 
 
     # flip() the display to put your work on screen
