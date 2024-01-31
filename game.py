@@ -109,10 +109,14 @@ class GameController():
     gameEndedTextFontSize = 64
     gameMap : object = None
     screen : pygame.surface.Surface = None
+    player = None # player
+    enemyController = None
 
     def __init__(self, gameMap : object, screen : pygame.surface.Surface) -> None:
         self.gameMap = gameMap
         self.screen = screen
+        self.player = player
+        self.enemyController = enemyController
 
     # Ends a game
     def EndGame(self, reason : str):
@@ -227,7 +231,7 @@ class PlayerController():
     currentDirection : int = Direction.none # the current Direction of snake, as int. Default to up
     colour = (116, 149, 189)
     screen : pygame.surface = None # initalise
-    gameMap = None # initialise
+    gameMap : GameController = None # initialise
     killsTextPadding = (10,10) # Padding pixels from top-left to give tjhe length text
     killsTextFontSize = 32 # font size of the length text
     playerSpeed : int = 10 # how many pixels the player moves per frame
@@ -259,6 +263,7 @@ class PlayerController():
         self.tileSize = tileSize
         self.screen = screen
         self.game = game
+        game.player = self # set player
 
     # takes in real coords of a positio n
     def IsOutOfScreenBounds(self , desiredPosition : tuple) -> bool:
@@ -491,10 +496,12 @@ class EnemyController():
     player : PlayerController = None
     sizeXY : int = 15 # size of a single enemy
     enemyColour = (252, 29, 54)
+    enemiesLeft = 1 # start
 
     def __init__(self, game : GameController, player : PlayerController) -> None:
         self.game = game
         self.player = player
+        self.game.enemyController = self # set enemy controller
 
     # Spawmn a singular enemy
     def SpawnEnemy(self, enemyPosition):
@@ -508,13 +515,25 @@ class EnemyController():
     """
         
     # get a list of all enemy locations as tile coords not using self.enemyPositions
-    def GetEnemyTileRects(self, realTilePositions : list) -> list:
-        enemyRects = []
+    def GetTilesEnemyIsIn(self, realTilePositions : list) -> list:
+        enemyTiles = []
         sizeXY = self.sizeXY
+        gameMap = self.game.gameMap
+        tileSizeXY = gameMap.tileSize
         for enemyPosition in realTilePositions:
-            position = GameMap.realToTileCoords(enemyPosition)
-            enemyRects.append(pygame.Rect(position[0],-1 * position[1], sizeXY,sizeXY))
-        return enemyRects
+            enemyPosition = GameMap.realToTileCoords(enemyPosition, tileCoord)
+            for sizeIndexX in range(0, sizeXY):
+                for sizeIndexY in range(0, sizeXY):
+                    realCoord = numpy.add((sizeIndexX,sizeIndexY), enemyPosition) # add the iterated size to actual position or else it will revolve around
+                    tileCoord = GameController.realToTileCoords(realCoord, tileSizeXY)
+                    # tile coord doesn't exist
+                    if(not(tileCoord in enemyTiles)):
+                        enemyTiles.append(tileCoord)
+
+
+            
+            #enemyRects.append(pygame.Rect(position[0],-1 * position[1], sizeXY,sizeXY))
+        return enemyTiles
     
 
     def GenerateEnemies(self, qtyToGenerate):
@@ -527,6 +546,7 @@ class EnemyController():
         if(qtyToGenerate != 0):
             # iterate through generation
             for generationIndex in range(0, qtyToGenerate):
+
                 # get range of tiles not in players
                 generationRanges = [] # each list in the list is a range (tuple) where objects can generate. If empty list they can't generate in this row
                 totalRows = gameMap.rows # Get total possible rows as an int
@@ -539,7 +559,6 @@ class EnemyController():
                     if(not (rowIndex == 1 or rowIndex == totalRows)):
                         rowRanges : list = [] # intialise the row ranges
                         generatedEnemyTiles : list = [] # list of enemy tiles as tuples
-                        rowDoesIntersectWithPlayer = False
                         firstIntersectRecorded = False # bool of whether the first ineterse
                         # loop throuugh columns of row
                         lastColumnIntersect = 1 # initialised, the column of intersect 
@@ -549,32 +568,39 @@ class EnemyController():
                             interesctingColumn : int = columnIndex # init
                             
                             interesctingColumn = columnIndex
-                            
+                            generatedATile : bool = False
+
                             if (iteratedTile == playerPosAsTile):
                                 interesctingColumn = columnIndex
-                                rowDoesIntersectWithPlayer = True
+                                if(firstIntersectRecorded == False):
+                                    firstIntersectRecorded = True
                                 lastColumnIntersect = interesctingColumn
-                            if(columnIndex == rowSize and not (iteratedTile in generatedEnemyTiles)): #  last index
+                            if(columnIndex == 1 or columnIndex == rowSize): #  last index
                                 interesctingColumn = columnIndex
-                                firstIntersectRecorded = True
+                                if(firstIntersectRecorded == False):
+                                    firstIntersectRecorded = True
                                 lastColumnIntersect = interesctingColumn # record the last intersect
-                                if (lastColumnIntersect+1 != rowSize and (columnIndex == 1 or columnIndex == rowSize)): # if last intersecting column + 1 is not the end 
+                                if (lastColumnIntersect+1 != rowSize): # if last intersecting column + 1 is not the end 
                                     rowRanges.append((lastColumnIntersect+1,rowSize))
+                                    generatedATile = True
                                     lastColumnIntersect = interesctingColumn # record as intersect so other math makes sense
                                 # else, leave list empty
-                            elif(((nextTile != iteratedTile) and (iteratedTile != playerPosAsTile))): # check for intersection 
+                            elif(((nextTile != iteratedTile) and (iteratedTile != playerPosAsTile)) or (not (iteratedTile in generatedEnemyTiles))): # check for intersection or iterated tile is not same as generated one
                                 if(firstIntersectRecorded == True): # if first recorded intersect
                                     firstIntersectRecorded = False
                                     rowRanges.append((1, interesctingColumn-1)) # start at 1
+                                    generatedATile = True
                                 else: # not first
                                     rowRanges.append((lastColumnIntersect+1, interesctingColumn-1)) # from last intersect to current
-                            elif((iteratedTile in generatedEnemyTiles)): # handle enemy tile is the same as previously generated tile 
+                                    generatedATile = True
                             
+
+                            if(generatedATile == True):
+                                generatedEnemyTiles.append(iteratedTile)
                             
                         # Row doesn't intersect with snake
                         # print(rowDoesIntersectWithSnake)
-                        if(rowDoesIntersectWithPlayer == False):
-                            rowRanges = [(1,rowSize)]
+                        
 
                         generationRanges.append(rowRanges) # add a list for each row
 
@@ -603,6 +629,7 @@ class EnemyController():
                 game = self.game
                 currentLevel = game.level # get level
                 self.lastLevelLoaded = currentLevel # finally set loaded objects
+            self.enemiesLeft = qtyToGenerate # set enemies left
 
     def RenderEnemies(self):
         playerPosition : tuple = player.playerPosition # real player position
