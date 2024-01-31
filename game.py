@@ -115,8 +115,6 @@ class GameController():
     def __init__(self, gameMap : object, screen : pygame.surface.Surface) -> None:
         self.gameMap = gameMap
         self.screen = screen
-        self.player = player
-        self.enemyController = enemyController
 
     # Ends a game
     def EndGame(self, reason : str):
@@ -223,7 +221,71 @@ class GameMap():
            realCoord =  (realCoord[0], tileCoord[1] * tileSize - 1)
 
        return realCoord
+
+class Projectle():
+    velocity = (0,0) # velocity is a vector2d (tuple) of how mmany pixels a projectile will travel in one second
+    position = (0,0) # position of projectile, will change from velocity
+    #startPosition = (0,0) # start position of projectile in real coords 
+    shouldMoveProjectile = False # don't need to start
+
+    def __init__(self, startPosition : tuple, velocity : tuple) -> None:
+        self.velocity = velocity
+        #self.startPosition = startPosition
+        self.position = startPosition # start position at start position
+    
+    # start moving the projectile 
+    def StartProjectile(self):
+        self.shouldMoveProjectile = True
+
+    # time differemce is usually the amount of difference since the last update
+    def MoveProjectile(self, timeDifference):
+        velocity = self.velocity # use the velcotiy with time differennce to get amounnt moved
+
+        moveAmnt = numpy.multiply(velocity, timeDifference) # tuple of x and y move amount using velocity
+        currentPosition = self.position
+        self.position = numpy.append(currentPosition, moveAmnt)
+
+class ProjectileHandler():
+    projectiles : list = [] # list of Proectile objects
+    projectileRadius = 2.5 # the pixels of the readius of each projectile
+    screen : pygame.surface.Surface = None # initalise
+    game : GameController = None # initalise
+    lastUpdate = getCurrentMillisecondTime() # last update in millis
+    projectileColour = (223,224,99) # a yellow because yellow is easier for humans to notice
+
+    def __init__(self, screen : pygame.surface.Surface, game : GameController) -> None:
+        self.screen = screen
+        self.game = game
+
+    # updates all projectiles
+    def UpdateProjectiles(self):
+        currentTime = getCurrentMillisecondTime()
+        timeDifference = currentTime - self.lastUpdate # difference in time in millis
+
+        for projectile in self.projectiles:
+            if(projectile.shouldMoveProjectile == True):
+                projectile.MoveProjectile(timeDifference)
+
+        lengthOfProjectiles = len(self.projectiles)
+        if(lengthOfProjectiles == 0):
+            self.game.level += 1 # Increment level
         
+        self.lastUpdate = currentTime #setup next update
+
+    # Add projectile to managed projectiles
+    def AddProjectile(self, projectile):
+        self.projectiles.append(projectile)
+
+    def RenderProjectiles(self):
+        for projectile in self.projectiles:
+            projectilePos = projectile.position
+            projectileRadius = self.projectileRadius
+
+            # Draw projectile
+            pygame.draw.circle(self.screen, self.projectileColour, projectilePos, projectileRadius)
+
+
+
 # Player is rendered as triangle
 class PlayerController():
     size : tuple = (5,15) # tuple of real coords, first value is width between base and second is height
@@ -486,27 +548,85 @@ class PlayerController():
         self.MoveInCurrentDirection()
 
         return True
+
+
+enemyId = 0 # start at 0
+
+class Enemy():
+    id : int = None # set in init
+    position : tuple = (0,0) # real coords of enemy position
+    projectileReady : bool = True
+    projectile : Projectle  = None # a projectile that is under the enemy control
+    projectileCooldown : int = 1000 # After this many millis have passed, spawn a new projectile
+    lastProjectileCleanupTime = 0 # last time in millis since the enemy's projectilem was erased
+    player = None # init in constructor
+    sizeOfEnemyXY : int = None
+
+    def __init__(self, player : PlayerController, sizeOfEnemyXY : int, initialPosition : tuple) -> None:
+        global enemyId
+        enemyId += + 1
+        self.player = player
+        self.sizeOfEnemyXY = sizeOfEnemyXY
+        self.position = initialPosition
+
+    # create a projectile. Pass in speed as arg, single val
+    def createProjectile(self, speed : float, projectileHandler : ProjectileHandler):
+        player = self.player
+        sizeOfEnemyXY = self.sizeOfEnemyXY
+        enemyPositon = self.position
+        playerPosition = player.playerPosition    
+        playerSize = player.size
+        playerMidPoint = (playerPosition[0] + playerSize[0]/2, playerPosition[1] + playerSize[1]/2)
+        enemyMidPoint = (enemyPositon[0] + sizeOfEnemyXY/2, enemyPositon[1] + sizeOfEnemyXY/2)
+
+        difOfEnemyToPlayer = numpy.subtract(playerMidPoint,enemyMidPoint) # vector is relative to 0
+        magOfEnemyToPlayer = math.sqrt(pow(difOfEnemyToPlayer[0],2) + pow(difOfEnemyToPlayer[1],2) )
+
+        originVecNormalised = numpy.divide(difOfEnemyToPlayer, magOfEnemyToPlayer) # divide each point by distance. vector is relative to 0
+        velocityVec = numpy.multiply(originVecNormalised, speed) # Multiple normalised vector by speed to get velocity. Each axis neeeds to be mmultiplied by number
+
+        # add projectile
+        projectile = Projectle(enemyMidPoint, velocityVec)
+        projectile.StartProjectile() # start it moving
+        projectileHandler.AddProjectile(projectile) # Add to managed projectiles
+        self.projectile = projectile
+
     
+
+    def GetANewProectileIsReady(self, currentTime) -> bool:
+        lastProjectileCleanupTime = self.lastProjectileCleanupTime# last time in millis since the enemy's projectilem was erased
+        projectileCooldown = self.projectileCooldown
+        # time difference is more than cooldowm
+        if(currentTime - lastProjectileCleanupTime >= projectileCooldown):
+            return True
+        else:
+            return False
+            
+
 # Spawn enemies and control them
 class EnemyController():
     lastLevelLoaded = 0 # the last level with enemies that is loaded
     game : GameController = None
     maxEnemiesPerlevel = 8
-    enemyPositions = []
+    enemies = [] # a list of enemies
     player : PlayerController = None
     sizeXY : int = 15 # size of a single enemy
     enemyColour = (252, 29, 54)
     enemiesLeft = 1 # start
+    projectileHandler = None 
+    enemyProjectileSpeed = 15 # speed in pixels/second
 
-    def __init__(self, game : GameController, player : PlayerController) -> None:
+    def __init__(self, game : GameController, player : PlayerController, projectileHandler : ProjectileHandler ) -> None:
         self.game = game
         self.player = player
-        self.game.enemyController = self # set enemy controller
+        self.projectileHandler = projectileHandler
+        game.enemyController = self # set enemy controller
 
     # Spawmn a singular enemy
     def SpawnEnemy(self, enemyPosition):
         realTilePosition = GameMap.tileCoordsToReal(enemyPosition, self.game.gameMap.tileSize)
-        self.enemyPositions.append(realTilePosition)
+        newEnemy = Enemy(self.player, self.sizeXY, realTilePosition)
+        self.enemies.append(newEnemy)
     
     """
     # get a rect of potential enemy location as tile coords
@@ -535,6 +655,13 @@ class EnemyController():
             #enemyRects.append(pygame.Rect(position[0],-1 * position[1], sizeXY,sizeXY))
         return enemyTiles
     
+    def GetEnemyPositions(self) -> list:
+        endList = []
+        for enemy in self.enemies:
+            #enemy : Enemy = enemy
+            enemyPos = enemy.position
+            endList.append(enemyPos)
+        return endList
 
     def GenerateEnemies(self, qtyToGenerate):
         qtyToGenerate = round(qtyToGenerate) # Make sure it is a whole number
@@ -562,9 +689,9 @@ class EnemyController():
                         firstIntersectRecorded = False # bool of whether the first ineterse
                         # loop throuugh columns of row
                         lastColumnIntersect = 1 # initialised, the column of intersect 
-                        for columnIndex in range(0, rowSize+1): # range exclusive
-                            iteratedTile = (rowIndex, columnIndex)
-                            nextTile = (rowIndex, columnIndex + 1) # next tile, it is handled if last column
+                        for columnIndex in range(0, rowSize): # range exclusive
+                            iteratedTile = (rowIndex+1, columnIndex+1)
+                            nextTile = (rowIndex, iteratedTile[1] + 1) # next tile, it is handled if last column
                             interesctingColumn : int = columnIndex # init
                             
                             interesctingColumn = columnIndex
@@ -575,17 +702,17 @@ class EnemyController():
                                 if(firstIntersectRecorded == False):
                                     firstIntersectRecorded = True
                                 lastColumnIntersect = interesctingColumn
-                            if(columnIndex == 1 or columnIndex == rowSize): #  last index
-                                interesctingColumn = columnIndex
-                                if(firstIntersectRecorded == False):
-                                    firstIntersectRecorded = True
-                                lastColumnIntersect = interesctingColumn # record the last intersect
-                                if (lastColumnIntersect+1 != rowSize): # if last intersecting column + 1 is not the end 
-                                    rowRanges.append((lastColumnIntersect+1,rowSize))
-                                    generatedATile = True
-                                    lastColumnIntersect = interesctingColumn # record as intersect so other math makes sense
+                            
+                                    # lastColumnIntersect = interesctingColumn # record as intersect so other math makes sense
                                 # else, leave list empty
-                            elif(((nextTile != iteratedTile) and (iteratedTile != playerPosAsTile)) or (not (iteratedTile in generatedEnemyTiles))): # check for intersection or iterated tile is not same as generated one
+                            if(((iteratedTile != playerPosAsTile)) and (not (iteratedTile in generatedEnemyTiles))): # check for intersection and iterated tile is not same as generated one
+                                if((columnIndex == 1 or columnIndex == rowSize)): #  last index
+                                    if (lastColumnIntersect+1 != rowSize): # if last intersecting column + 1 is not the end 
+                                        rowRanges.append((lastColumnIntersect+1,rowSize))
+                                        generatedATile = True
+                                        interesctingColumn = columnIndex
+                                        if(firstIntersectRecorded == False):
+                                            firstIntersectRecorded = True
                                 if(firstIntersectRecorded == True): # if first recorded intersect
                                     firstIntersectRecorded = False
                                     rowRanges.append((1, interesctingColumn-1)) # start at 1
@@ -639,7 +766,7 @@ class EnemyController():
         enemyHeight = enemySize
         enemyColour = self.enemyColour
  
-        for enemyPositon in self.enemyPositions:
+        for enemyPositon in self.GetEnemyPositions():
             # enemy position is in real coords
             tempPosRect = pygame.Rect(enemyPositon[0] - enemyWidth, enemyPositon[1] - enemyHeight, enemyWidth, enemyHeight)
             pygame.draw.rect(self.game.screen, enemyColour, tempPosRect)
@@ -742,13 +869,19 @@ class EnemyController():
             print(enemyPositon)
             """
 
-
-
     def Update(self):
         game : GameController = self.game
         lastLevelLoaded = self.lastLevelLoaded
         currentLevel = game.level
         maxEnemiesPerlevel = self.maxEnemiesPerlevel
+
+        # loop through all enemies
+        enemies : list = self.enemies
+        for enemy in enemies:
+            enemy : Enemy = enemy # for writing code, includes hint
+            currentTime = getCurrentMillisecondTime()
+            if(enemy.GetANewProectileIsReady(currentTime)):
+                enemy.createProjectile(self.enemyProjectileSpeed, self.projectileHandler) # Create a eew projectile
 
         # If last level is not the same as curerent level
         if(lastLevelLoaded != currentLevel):
@@ -757,12 +890,12 @@ class EnemyController():
              # Spawn enemies
             self.GenerateEnemies(qtyToGenerate)
 
-
 # controls all fruit on map
 
 tileSize = 20
 gameMap = GameMap(tileSize)
 game = GameController(gameMap, screen)
+projectileHandler = ProjectileHandler(screen, game) 
 
 if (gameMap.errorOnCreation):
     print("!! There was an error creating the map !!")
@@ -774,7 +907,7 @@ print(tileCoords)
 realCoords = (GameMap.tileCoordsToReal(tileCoords, tileSize))
 print(realCoords)
 player = PlayerController(screen, game, tileSize)
-enemyController = EnemyController(game, player)
+enemyController = EnemyController(game, player, projectileHandler)
 #fruitController = FruitController(screen, gameMap, game)
 gameControls = Controls.WASD
 
@@ -968,9 +1101,11 @@ while running:
     if(game.end == False):
         player.Update() # update the player and move if enough time has passed. Func retunrs True if success
         enemyController.Update()
+        projectileHandler.UpdateProjectiles()
     # render snake below text in case player decides to go under text
     player.Render()
     enemyController.RenderEnemies()
+    projectileHandler.RenderProjectiles()
     # player.RenderHitbox() # debugging
     if(game.end == False):
         pass
