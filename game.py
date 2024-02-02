@@ -224,15 +224,30 @@ class GameMap():
 
 class Projectle():
     velocity = (0,0) # velocity is a vector2d (tuple) of how mmany pixels a projectile will travel in one second
-    position = (0,0) # position of projectile, will change from velocity
+    position = (0,0) # position of projectile, will change from velocity. This is centre of projectile
+    radius : float = None # radius of projectile
     #startPosition = (0,0) # start position of projectile in real coords 
     shouldMoveProjectile = False # don't need to start
     launched : bool = False # whether projectile has started moving
+    isEnemyProjectile : bool = False
+    hitbox : pygame.Rect = None # Just a rect
+    projectileEnemyColour = (223,224,99) # a yellow because yellow is easier for humans to notice
+    projectileColour = (255,255,255) # default colour for non--enemy projectiles
+    screen : pygame.surface.Surface = None # initalise
+    owner : object = None # owner of projectile, could be player or enemy 
+    hasCollided : bool = False # whether the projectile has collided with anything
 
-    def __init__(self, startPosition : tuple, velocity : tuple) -> None:
+
+    def __init__(self, owner, startPosition : tuple, velocity : tuple, screen : pygame.surface.Surface, isEnemyProjectile : bool = False, radius : float = 3 ) -> None:
         self.velocity = velocity
+        self.screen = screen
+        self.owner = owner
         #self.startPosition = startPosition
-        self.position = startPosition # start position at start position
+        self.position = startPosition # start position at start position. This is centre of projectile
+        self.isEnemyProjectile = isEnemyProjectile
+        self.radius = radius
+        self.hitbox = pygame.Rect(startPosition[0]-radius, startPosition[1] - radius, radius* 2, radius * 2) # intialise
+
     
     # start moving the projectile 
     def StartProjectile(self):
@@ -242,50 +257,106 @@ class Projectle():
     def MoveProjectile(self, timeDifference):
         velocity = self.velocity # use the velcotiy with time differennce to get amount moved
         moveAmnt = numpy.multiply(velocity, timeDifference/1000.0) # tuple of x and y move amount using velocity. /1000 to convert millis to seconds
-        currentPosition = self.position
-        self.position = tuple(currentPosition + moveAmnt)
+        currentPosition = self.position 
+        newPosition = tuple(currentPosition + moveAmnt) 
+        radius = self.radius
+        self.position = newPosition
         self.launched = True
+        self.hitbox = pygame.Rect(newPosition[0] - radius, newPosition[1] - radius, radius*2, radius *2)
         #print("here")
+    
+    def Render(self):
+        projectilePos = self.position
+        projectileRadius = self.radius
+
+        # Draw projectile
+        if(self.isEnemyProjectile == True):
+            pygame.draw.circle(self.screen, self.projectileEnemyColour, projectilePos, projectileRadius)
+        else: # not an enemy projectile
+            pygame.draw.circle(self.screen, self.projectileColour, projectilePos, projectileRadius)
+
+    def RenderHitbox(self):
+        hitboxRect = self.hitbox
+        pygame.draw.rect(self.screen, "white", hitboxRect)
 
 class ProjectileHandler():
     projectiles : list = [] # list of Proectile objects
-    projectileRadius = 2.5 # the pixels of the readius of each projectile
-    screen : pygame.surface.Surface = None # initalise
+    projectilesLength = 0
     game : GameController = None # initalise
     lastUpdate = getCurrentMillisecondTime() # last update in millis
-    projectileColour = (223,224,99) # a yellow because yellow is easier for humans to notice
     startingLevel = 1 
+    removingAProjectile : bool = False
 
-    def __init__(self, screen : pygame.surface.Surface, game : GameController) -> None:
-        self.screen = screen
+    def __init__(self, game : GameController) -> None:
         self.game = game
 
+    # pass in projectile object
+    def RemoveProjectile(self, projectile : Projectle):
+        projectileIndex = self.projectiles.index(projectile)
+        self.removingAProjectile = True
+        self.projectiles.pop(projectileIndex)
+       #print("Removed a projectile")
+    
     # updates all projectiles
-    def UpdateProjectiles(self):
+    def UpdateProjectiles(self, player, enemies):
         currentTime = getCurrentMillisecondTime()
         timeDifference = currentTime - self.lastUpdate # difference in time in millis
+        #enemyProjectiles : list = []
 
-        for projectile in self.projectiles:
+        
+        for projectileIndex in range(0, len(self.projectiles)):
+            # prevent an error
+            if(self.removingAProjectile == True):
+                self.removingAProjectile = False # set to false again
+                return
+            projectile : Projectle = self.projectiles[projectileIndex]
+
             if(projectile.shouldMoveProjectile == True):
                 projectile.MoveProjectile(timeDifference)
+            #if(projectile.isEnemyProjectile == True):
+                #enemyProjectiles.append(projectile)
+            # Detect a hit
+                
+            
+            if(projectile.hasCollided == False):
+                # is enemy, check hit with player
+                if(projectile.isEnemyProjectile == True):
+                    if(projectile.hitbox.colliderect(player.hitbox) == True):
+                        projectile.hasCollided = True
+                        enemy : Enemy = projectile.owner
+                        enemy.lastProjectileCleanupTime = getCurrentMillisecondTime()
+                        self.RemoveProjectile(projectile) # remove from list
+                        enemy.projectile = None
+                        player.hp -= enemy.damage
 
-        lengthOfProjectiles = len(self.projectiles)
-        if(lengthOfProjectiles == 0 and self.game.level > self.startingLevel):
-            self.game.level += 1 # Increment level
+                        print("Player hit by enemy")
+                # else, check for a hit with any enemy hitboxes
+                else:
+                    for enemy in enemies:
+                        if(projectile.hitbox.colliderect(enemy.hitbox)):
+                            projectile.hasCollided = True
+                            self.RemoveProjectile(projectile) # remove from list
+                            enemy.hp -= player.damage
+                            print("Enemy hit by player")
+
+        #lengthOfEnemyProjectiles = len(enemyProjectiles)
+        #if(lengthOfEnemyProjectiles == 0 and self.game.level > self.startingLevel):
+            #self.game.level += 1 # Increment level
         
+        
+
         self.lastUpdate = currentTime #setup next update
 
     # Add projectile to managed projectiles
     def AddProjectile(self, projectile):
         self.projectiles.append(projectile)
 
-    def RenderProjectiles(self):
+    def RenderProjectiles(self , shouldRenderHiibox : bool = False):
         for projectile in self.projectiles:
-            projectilePos = projectile.position
-            projectileRadius = self.projectileRadius
+            projectile.Render()
+            if(shouldRenderHiibox == True):
+                projectile.RenderHitbox()
 
-            # Draw projectile
-            pygame.draw.circle(self.screen, self.projectileColour, projectilePos, projectileRadius)
 
 
 
@@ -305,11 +376,16 @@ class PlayerController():
     hitbox : pygame.rect = None # just a rect, does not hold the render. Updated on .Render()
     hitboxColour = (151, 236, 239) # For debugging
     #hitboxOutlineSize = 3 # For debugging, width of outline in pixels
-    hp = 300 # health
+    hp = 100 # health
     directionBeforeRest : int = None # intended to be set before direction.none is made current direction
+    projectileCooldown : int = 500 # how may millis until player can fire
+    timeSinceLastShoot : int = 0 # in millis
+    damage : int = 50 # damage to enemies
+    projectileSpeed : int = 300 # in pixel/second
+    projectiles : list = [] # list of player projcetile objects
 
     # constrcutor must have screen and GameMap and tilesiaze arg
-    def __init__(self,screen : pygame.surface, game : GameController, tileSize : int ) -> None:
+    def __init__(self, screen : pygame.surface, game : GameController, tileSize : int ) -> None:
         # -- Start location
 
         #floor the / 2 because it avoids decimals 
@@ -371,6 +447,27 @@ class PlayerController():
         if(not self.IsOutOfScreenBounds(newPosition)):
             self.playerPosition = newPosition # set new pos 
 
+    # get angle based on direction of player. IN DEGREES
+    def GetPlayerAngleBasedOnDirection(self, direction : Direction) -> int:
+        playerDirectionAngle = 0 # default or pointing North. In degrees cos they're easier to read
+
+        if(direction == Direction.east):
+            playerDirectionAngle = 90
+        elif(direction == Direction.south):
+            playerDirectionAngle = 180
+        elif(direction == Direction.west):
+            playerDirectionAngle = 270
+        elif(direction == Direction.northEast):
+            playerDirectionAngle = 45
+        elif(direction == Direction.northWest):
+            playerDirectionAngle = 315 # 270 + 45
+        elif(direction == Direction.southEast):
+            playerDirectionAngle = 135 # 180 - 45
+        elif(direction == Direction.southWest):
+            playerDirectionAngle = 225 # 180 + 45
+
+        return playerDirectionAngle
+
     # must be called each frame, displays the character
     def Render(self) -> None:
         #print("rendering")
@@ -398,23 +495,7 @@ class PlayerController():
         playerPoints.append((playerPosition[0] + playerWidth/2,playerPosition[1]-playerHeight)) # create top
         midPoint = (playerPosition[0] + playerWidth / 2, playerPosition[1] - playerHeight / 2) # centre of triangle
 
-        playerDirectionAngle = 0 # default or pointing North. In degrees cos they're easier to read
-
-        # No Need to do north. Keep in mind the angle is is counter-clockwise
-        if(playerDirection == Direction.east):
-            playerDirectionAngle = 90
-        elif(playerDirection == Direction.south):
-            playerDirectionAngle = 180
-        elif(playerDirection == Direction.west):
-            playerDirectionAngle = 270
-        elif(playerDirection == Direction.northEast):
-            playerDirectionAngle = 45
-        elif(playerDirection == Direction.northWest):
-            playerDirectionAngle = 315 # 270 + 45
-        elif(playerDirection == Direction.southEast):
-            playerDirectionAngle = 135 # 180 - 45
-        elif(playerDirection == Direction.southWest):
-            playerDirectionAngle = 225 # 180 + 45
+        playerDirectionAngle = self.GetPlayerAngleBasedOnDirection(playerDirection) # In degrees cos they're easier to read. Angles are counter-clockwise
         
         #if not 0
         if(playerDirectionAngle != 0):
@@ -506,7 +587,48 @@ class PlayerController():
         padding = self.killsTextPadding
         killsTextlocation = (padding[0],padding[1]) # top left (0,0) + padding. (0,0) can be omitted
         self.screen.blit(killsTextSurface, killsTextlocation) # render text to screen
+    
+    # Gets the real coord of point of player that is tip
+    def GetTipOfPlayer(self) -> tuple:
+        playerPosition = self.playerPosition # position of player
+        playerDirection = self.currentDirection
+        if(playerDirection == Direction.none and self.directionBeforeRest != None):
+            playerDirection = self.directionBeforeRest # set it to direction before stop
+
+        playerWidth = self.size[0]
+        playerHeight = self.size[1]
         
+
+        playerTip = ((playerPosition[0] + playerWidth/2,playerPosition[1]-playerHeight)) # create tip
+        midPoint = (playerPosition[0] + playerWidth / 2, playerPosition[1] - playerHeight / 2) # centre of triangle
+
+        playerAngle = math.radians(self.GetPlayerAngleBasedOnDirection(playerDirection) )
+        return rotate2DVectorAroundPoint(playerTip, midPoint, playerAngle) # the tip rotated
+
+    # Shoot a projectile in player direction
+    def Shoot(self):
+        currentTime = getCurrentMillisecondTime()
+        if(currentTime - self.timeSinceLastShoot < self.projectileCooldown):
+            print("Not shooting, not enough time has passed. \nTime difference:"+str(currentTime- self.timeSinceLastShoot)+"\nCooldown:"+ str(self.projectileCooldown))
+            return
+        print("shooting")
+        tipOfPlayer = self.GetTipOfPlayer()
+        playerDirection = self.currentDirection
+        if(playerDirection == Direction.none and self.directionBeforeRest != None):
+            playerDirection = self.directionBeforeRest # set it to direction before stop
+        # shoot from this angle
+        #print("----")
+        #print("Shooting in direction: "+Direction.DirectionToString(playerDirection))
+        #print(self.GetPlayerAngleBasedOnDirection(playerDirection))
+        angleOfCurrentDirection = math.radians(self.GetPlayerAngleBasedOnDirection(playerDirection) - 90)
+        # See desmos graph https://www.desmos.com/calculator/z3fngmdr6p
+        normalisedVelocity = (math.cos(angleOfCurrentDirection), math.sin(angleOfCurrentDirection))
+        velocity = numpy.multiply(normalisedVelocity, self.projectileSpeed)
+
+        projectle = Projectle(self, tipOfPlayer, velocity, screen)
+        projectileHandler.AddProjectile(projectle) # add to handler
+        projectle.StartProjectile() # start moving
+        self.timeSinceLastShoot = currentTime # setup next shot
 
         
     lastDirectionChangeTime = 0 # in millis
@@ -518,7 +640,7 @@ class PlayerController():
         
         # save the old direction
         oldDirection = self.currentDirection
-        print("Old direction: "+Direction.DirectionToString(oldDirection))
+        #print("Old direction: "+Direction.DirectionToString(oldDirection))
         if(moveDirection == Direction.none):
             self.directionBeforeRest = self.currentDirection
 
@@ -535,6 +657,11 @@ class PlayerController():
 
     # returns True if success, does not render. Intended to be called each frame
     def Update(self) -> bool:#, render = True, screen : pygame.surface = None, tileSize : int = None):
+        # check player hp
+        hp = player.hp
+        if(hp <= 0):
+            print("hp is:"+str(hp)+"\nEnding the game")
+            self.game.EndGame("Hp is less than or equal to 0")
 
         # Check if enough time has passed
         currentTimeInMilliseconds = getCurrentMillisecondTime()
@@ -547,7 +674,7 @@ class PlayerController():
 
         # the Direction the player is facing
         
-        # Move the snake
+        # Move the player
         self.MoveInCurrentDirection()
 
         return True
@@ -562,15 +689,25 @@ class Enemy():
     projectile : Projectle  = None # a projectile that is under the enemy control
     projectileCooldown : int = 1000 # After this many millis have passed, spawn a new projectile
     lastProjectileCleanupTime = 0 # last time in millis since the enemy's projectilem was erased
+    colour = (252, 29, 54) # colour of enemy
+    hitbox : pygame.Rect = None
+    sizeXY = None
+    screen : pygame.surface.Surface = None
+    hp = 50 # survive one hit
+    damage = 20 # how much damage enemy does to player
+
     player = None # init in constructor
     sizeOfEnemyXY : int = None
 
-    def __init__(self, player : PlayerController, sizeOfEnemyXY : int, initialPosition : tuple) -> None:
+    def __init__(self, screen : pygame.surface.Surface, player : PlayerController, sizeOfEnemyXY : int, initialPosition : tuple, sizeXY) -> None:
         global enemyId
         enemyId += + 1
         self.player = player
         self.sizeOfEnemyXY = sizeOfEnemyXY
         self.position = initialPosition
+        self.screen = screen
+        self.sizeXY = sizeXY
+        self.hitbox = pygame.Rect(initialPosition[0], initialPosition[1] - sizeXY, sizeXY, sizeXY)
 
     # create a projectile. Pass in speed as arg, single val
     def createProjectile(self, speed : float, projectileHandler : ProjectileHandler):
@@ -589,11 +726,27 @@ class Enemy():
         velocityVec = numpy.multiply(originVecNormalised, speed) # Multiple normalised vector by speed to get velocity. Each axis neeeds to be mmultiplied by number
 
         # add projectile
-        projectile = Projectle(enemyMidPoint, velocityVec)
+        projectile = Projectle(self, enemyMidPoint, velocityVec, screen, True)
         projectile.StartProjectile() # start it moving
         projectileHandler.AddProjectile(projectile) # Add to managed projectiles
         self.projectile = projectile
     
+    def Render(self):
+        # enemy position is in real coords
+        position = self.position
+        sizeXY = self.sizeXY
+        enemyWidth = sizeXY
+        enemyHeight = sizeXY
+        enemyColour = self.colour
+
+        # Draw at top-left
+        tempPosRect = pygame.Rect(position[0], position[1] - enemyHeight, enemyWidth, enemyHeight)
+        pygame.draw.rect(self.screen, enemyColour, tempPosRect)
+
+    def RenderHitbox(self):
+        hitboxRect = self.hitbox
+        pygame.draw.rect(self.screen, "white", hitboxRect )
+
     def GetANewProectileIsReady(self, currentTime) -> bool:
         lastProjectileCleanupTime = self.lastProjectileCleanupTime# last time in millis since the enemy's projectilem was erased
         projectileCooldown = self.projectileCooldown
@@ -615,8 +768,7 @@ class EnemyController():
     maxEnemiesPerlevel = 8
     enemies = [] # a list of enemies
     player : PlayerController = None
-    enemySizeXY : int = 15 # size of a single enemy
-    enemyColour = (252, 29, 54)
+    enemySizeXY : int = 20 # size of a single enemy
     enemiesLeft = 1 # start
     projectileHandler = None 
     enemyProjectileSpeed = 240 # speed in pixels/second
@@ -629,9 +781,16 @@ class EnemyController():
 
     # Spawmn a singular enemy, pass in a real position
     def SpawnEnemy(self, enemyPosition):
-        newEnemy = Enemy(self.player, self.enemySizeXY, enemyPosition)
+        newEnemy = Enemy(self.game.screen, self.player, self.enemySizeXY, enemyPosition, self.enemySizeXY)
         self.enemies.append(newEnemy)
     
+
+    def RemoveEnemy(self, enemy : Enemy):
+        enemyIndex = self.enemies.index(enemy)
+        self.enemies.pop(enemyIndex) # delete from list
+        del enemy # kill enemy
+
+
     """
     # get a rect of potential enemy location as tile coords
     def GetEnemyTileRect(self, realPosition) -> tuple:
@@ -788,129 +947,28 @@ class EnemyController():
                 self.lastLevelLoaded = currentLevel # finally set loaded objects
             self.enemiesLeft = qtyToGenerate # set enemies left
 
-    def RenderEnemies(self):
-        playerPosition : tuple = player.playerPosition # real player position
-        playerSize = player.size
-        enemySize = self.enemySizeXY
-        enemyWidth = enemySize
-        enemyHeight = enemySize
-        enemyColour = self.enemyColour
- 
-        for enemyPositon in self.GetEnemyPositions():
-            # enemy position is in real coords
-
-            # Draw at top-left
-            tempPosRect = pygame.Rect(enemyPositon[0], enemyPositon[1] - enemyHeight, enemyWidth, enemyHeight)
-            pygame.draw.rect(self.game.screen, enemyColour, tempPosRect)
-
-            """
-            enemyPoints = [] # a list of enemy points to render as polygon
-            enemyPoints.append(enemyPositon) # bottom-left position
-            enemyPoints.append((enemyPositon[0]+enemyWidth, enemyPositon[1])) # bottom-right
-            enemyPoints.append((enemyPositon[0]+enemyWidth / 2, enemyPositon[1] - enemyHeight)) # top
-            enemyMidPoint = (enemyPositon[0] + enemyWidth / 2, enemyPositon[1] - enemyHeight / 2)
-
-            enemyPointAngle = 0 # default tp 0 for now
-            playerMidPoint = (playerPosition[0] + playerSize[0]/2, playerPosition[1] - playerSize[1]/2) # midpoint, goal to point towards
-            enemyTriTop = enemyPoints[2] # the top of enemy triangle
-            playerTriTop = (playerPosition[0] + playerSize[0]/2, playerPosition[1] - playerSize[1])
-
-            radiusOfEnemyTriangle = enemyHeight / 2 
-
-            # check for intersect with imaginary circle around enemy and player midpoint, remember we want the enemy to point towards player, that is goal
-            # There can't be a situation where there isn't an intersect
-
-            # Search circle equation to find
-
-            # Check if the sqrt part is positive. You can't square root negative numbers in the real plane (idk if u can in complex).
-            # y will check for x intercept and x  for y. See my graph https://www.desmos.com/calculator/yjvgt7htmo
-
-            # draw an imaginary line from player top to midpoint of enemy.
-            # See my graph https://www.desmos.com/calculator/uh0fcsw30b
-            # get the slope between the two points
-            slope = 1 # default to 0
-            if((enemyMidPoint[0] - playerMidPoint[0] != 0) and (enemyMidPoint[1] - playerMidPoint[1] != 0)):
-                slope = (enemyMidPoint[1] - playerMidPoint[1]) / (enemyMidPoint[0] - playerMidPoint[0])
-            yIntercept = playerMidPoint[1]-(slope*playerMidPoint[0])
-
-
-            print("--------") 
-
-            # I did math by hand but I still have ataxia so it's not the best, I'm also from Vicroia, Melbourne so I draw my p weird because that's the correct local spelling
-            yBottomHalfPreSqrtResult = -1 * (pow(radiusOfEnemyTriangle, 2) - pow(enemyMidPoint[1], 2))
-            yTopHalfPreSqrtResult = -1 * yBottomHalfPreSqrtResult
-            
-            if(yBottomHalfPreSqrtResult > 0):
-                print(((math.sqrt(yBottomHalfPreSqrtResult))*slope)+yIntercept )
-            if(yTopHalfPreSqrtResult > 0):
-                print(((math.sqrt(yTopHalfPreSqrtResult))*slope)+yIntercept )
-
-            finishedEquationY = None # init. Going to be a number, likely a float
-            if(yBottomHalfPreSqrtResult >= 0 or yTopHalfPreSqrtResult >= 0): # positive or 0, there is an intersection
-                posPreSqrtResult = None # init. Going to be a number, likely a float
-                # get which one is positive
-                if(yBottomHalfPreSqrtResult > 0 or abs(yBottomHalfPreSqrtResult) == 0):
-                    posPreSqrtResult = yBottomHalfPreSqrtResult
-                elif(yTopHalfPreSqrtResult > 0 or yTopHalfPreSqrtResult == 0):
-                    posPreSqrtResult = yTopHalfPreSqrtResult
-                
-                finishedEquationY = ((math.sqrt(posPreSqrtResult))*slope)+yIntercept 
-            else:
-                print("neither y pre sqrt is above 0")
-            
-            # do the same for x
-            xBottomHalfPreSqrtResult = -1 * (pow(radiusOfEnemyTriangle, 2) - pow(enemyMidPoint[0], 2))
-            xTopHalfPreSqrtResult =  -1 * xBottomHalfPreSqrtResult
-            xResult1 = 0
-            xResult2 = 0
-
-            print("-------")
-            if(xBottomHalfPreSqrtResult > 0):
-                print(((math.sqrt(xBottomHalfPreSqrtResult))-yIntercept)/slope )
-            if(xTopHalfPreSqrtResult > 0):
-                print(((math.sqrt(xTopHalfPreSqrtResult))-yIntercept)/slope)
-
-            finishedEquationX = None # init. Going to be a number, likely a float
-            if(xBottomHalfPreSqrtResult >= 0 or xTopHalfPreSqrtResult >= 0): # positive or 0, there is an intersection
-                posPreSqrtResult = None # init. Going to be a number, likely a float
-                # get which one is positive
-                if(xBottomHalfPreSqrtResult > 0 or abs(xBottomHalfPreSqrtResult) == 0):
-                    posPreSqrtResult = xBottomHalfPreSqrtResult
-                elif(xTopHalfPreSqrtResult > 0 or xTopHalfPreSqrtResult == 0):
-                    posPreSqrtResult = xTopHalfPreSqrtResult
-                
-                finishedEquationX = ((math.sqrt(posPreSqrtResult))-yIntercept)/slope 
-            else:
-                print("neither X pre sqrt is above 0")
-                
-
-            #print(yBottomHalfPreSqrtResult > 0)
-            #print(yTopHalfPreSqrtResult > 0)
-            
-            if(math.isnan(finishedEquationX) == True):
-                finishedEquationX = 0
-                print("Got x as nan, defaulted to 0")
-            if(math.isnan(finishedEquationY) == True):
-                finishedEquationY = 0
-                print("Got y as nan, defaulted to 0")
-            finalPoint = numpy.add((finishedEquationX, finishedEquationY), (0,0))#(enemyTriTop))
-            
-            print(finalPoint)
-            pygame.draw.circle(screen, "red", finalPoint, 3)
-            print(playerPosition[1] > finishedEquationY)
-            print(enemyPositon)
-            """
+    def RenderEnemies(self, renderHitboxes : bool = False):
+        for enemy in self.enemies:
+            enemy.Render()
+            if(renderHitboxes == True):
+                enemy.RenderHitbox()
 
     def Update(self):
         game : GameController = self.game
         lastLevelLoaded = self.lastLevelLoaded
         currentLevel = game.level
         maxEnemiesPerlevel = self.maxEnemiesPerlevel
+        enemiesDead : list = [] # list of enemies to kill
+
 
         # loop through all enemies
         enemies : list = self.enemies
         for enemy in enemies:
             enemy : Enemy = enemy # for writing code, includes hint
+            if(enemy.hp <= 0): # enemy died
+                enemiesDead.append(enemy)
+                continue # skip this enemy
+
             currentTime = getCurrentMillisecondTime()
             #enemyProjectileWidth =  enemy.sizeOfEnemyXY
             #enemyProjectileHeight =  enemy.sizeOfEnemyXY
@@ -925,23 +983,41 @@ class EnemyController():
             
             # enemy projectile exists and is Out of bounds
             if((enemyProjectile != None) and (enemyProjectilePosition[0] < 0 or enemyProjectilePosition[0] > screenSize or enemyProjectilePosition[1] < 0 or enemyProjectilePosition[1] > screenSize)):
-                del enemy.projectile # delete projectile
+                projectileHandler.RemoveProjectile(enemyProjectile)
+                enemy.projectile = None
                 enemy.lastProjectileCleanupTime = currentTime # set last cleanup time
-                
+        
+        for enemy in enemiesDead:
+            self.RemoveEnemy(enemy)
+        
 
+        
+
+        print("---")
+        print(len(self.enemies))
         # If last level is not the same as curerent level
         if(lastLevelLoaded != currentLevel):
+            
             # Determine how many enemies to generate
             qtyToGenerate = min(maxEnemiesPerlevel, currentLevel) # cap out at 10 enemies
              # Spawn enemies
             self.GenerateEnemies(qtyToGenerate)
+            self.lastLevelLoaded = currentLevel
+        
+        print(len(self.enemies))
+        enemiesLength = len(self.enemies)
+        print(len(self.enemies))
+        # no more enemies
+        if(enemiesLength == 0):
+            self.game.level += 1 # go to next level
+            print("Going to next level:"+str(self.game.level))
 
 # controls all fruit on map
 
 tileSize = 20
 gameMap = GameMap(tileSize)
 game = GameController(gameMap, screen)
-projectileHandler = ProjectileHandler(screen, game) 
+projectileHandler = ProjectileHandler(game) 
 
 if (gameMap.errorOnCreation):
     print("!! There was an error creating the map !!")
@@ -958,7 +1034,7 @@ enemyController = EnemyController(game, player, projectileHandler)
 gameControls = Controls.WASD
 
 def handlePlayerMovement(moveDirection : int):
-    print("Moving in Direction " + Direction.DirectionToString(moveDirection))
+    #print("Moving in Direction " + Direction.DirectionToString(moveDirection))
     player.ChangeDirection(moveDirection) # type checking is done in function
 
 playerMovementKeysDown = {} # which keys are pressed down. Each key corresponds to index and vaalue is bool
@@ -982,7 +1058,7 @@ def fillMovementKeys():
 
 # Handle key down, pass in the pressed key event as input. Is oj
 def handleKeysDown() -> None:
-    print("Called key down function") # Is only called once regardless of keys down
+    #print("Called key down function") # Is only called once regardless of keys down
     
     keysPressed = pygame.key.get_pressed()
 
@@ -990,31 +1066,39 @@ def handleKeysDown() -> None:
 
     AtLeastOneKeyPressed = False
 
+    # Shoot button is spacebar
+    if(keysPressed[pygame.K_SPACE] == True ):
+        #print(player.currentDirection)
+        player.Shoot()
+    
+    
+    
     # if controls are wasd
     if(gameControls == Controls.WASD):
         # if pressed, is True
 
-        if(pygame.K_w in playerMovementKeysDown): # check if key exists
-            playerMovementKeysDown[pygame.K_w] = True # set value of key
-        else:
-            playerMovementKeysDown[pygame.K_w] = False
-        if(pygame.K_a in playerMovementKeysDown):
-            playerMovementKeysDown[pygame.K_a] = True # set value of key
-        else:
-            playerMovementKeysDown[pygame.K_a] = False
-        if(pygame.K_s in playerMovementKeysDown):
-            playerMovementKeysDown[pygame.K_s] = True # set value of key
-        else:
-            playerMovementKeysDown[pygame.K_s] = False
-        if(pygame.K_d in playerMovementKeysDown):
-            playerMovementKeysDown[pygame.K_d] = True # set value of key
-        else:
-            playerMovementKeysDown[pygame.K_d] = False
-        
         wState = keysPressed[pygame.K_w]
         aState = keysPressed[pygame.K_a]
         sState = keysPressed[pygame.K_s]
         dState = keysPressed[pygame.K_d]
+        if(pygame.K_w in playerMovementKeysDown and wState == True): # check if key exists
+            playerMovementKeysDown[pygame.K_w] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_w] = False # default to up
+        if(pygame.K_a in playerMovementKeysDown and aState == True):
+            playerMovementKeysDown[pygame.K_a] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_a] = False # default to up
+        if(pygame.K_s in playerMovementKeysDown and sState == True):
+            playerMovementKeysDown[pygame.K_s] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_s] = False # default to up
+        if(pygame.K_d in playerMovementKeysDown and dState == True):
+            playerMovementKeysDown[pygame.K_d] = True # set value of key
+        else:
+            playerMovementKeysDown[pygame.K_d] = False # default to up
+        
+        
 
         if(wState == False and aState == False and sState == False and dState == False):
             return # not w, a, s or d
@@ -1079,49 +1163,93 @@ def handleKeysDown() -> None:
         
     if(AtLeastOneKeyPressed == True and moveDirection != player.currentDirection):
         handlePlayerMovement(moveDirection)
+    #print(player.currentDirection)
         
 def handleKeyUp(event: pygame.event.Event = None) -> None:
     playerMovementKeysEnum = gameControls
     keysUp = [] # what keys were pressed up, expressed as indexes
+    # If controls == WASD 
+    keysDownBefore = [] # list of keys that were down
+    movementKeys = [] # list of all movement keys as int enum
+    
+    
     if(playerMovementKeysEnum == Controls.WASD):
         # Check what key was unpressed
         keys = pygame.key.get_pressed() # get state of all keys
         
+        movementKeys = [pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d]
+        """"
+        print("---------")
+        print(pygame.K_SPACE)
+        print(keys[pygame.K_SPACE])
+        print(movementKeys)
+        """
+        for keyIndex in playerMovementKeysDown.keys():
+            keyValue = playerMovementKeysDown[keyIndex]
+            if((type(keyIndex) != list) and keyValue == True and keyIndex in movementKeys):
+                
+                keysDownBefore.append(keyIndex) # append pygame index
+                playerMovementKeysDown[keyIndex] = False # now set to up
+                
+            elif((type(keyIndex) == list) and keyIndex[0] == True and keyIndex[1] == True and keyValue[0] in movementKeys and keyValue[1] in movementKeys):
+                keysDownBefore.append(keyIndex[0]) # append pygame indexes
+                keysDownBefore.append(keyIndex[1]) # append pygame indexes
+                playerMovementKeysDown[keyIndex][0] = False # index by list and set. Now set to up
+                playerMovementKeysDown[keyIndex][1] = False # now set to up
+
         #iterate through keys
-        for keyDownIndex in playerMovementKeysDown.keys():
-            keyDownValue = playerMovementKeysDown[keyDownIndex]
+        for keyIndex in playerMovementKeysDown.keys():
+            keyValue = playerMovementKeysDown[keyIndex]
             #fillMovementKeys() # update the movement key states recorded
             # if key unpressed and (last state key exists and last state was down)
-            if(type(keyDownIndex) != list and keys[pygame.K_w] == False and playerMovementKeysDown[pygame.K_w] == True):
-                keysUp.append(pygame.K_w)
-                playerMovementKeysDown[pygame.K_w] = False # ser new value of False
-            if(type(keyDownIndex) != list and keys[pygame.K_a] == False and playerMovementKeysDown[pygame.K_a] == True):
-                keysUp.append(pygame.K_a)
-                playerMovementKeysDown[pygame.K_a] = False # ser new value of False
-            if(type(keyDownIndex) != list and keys[pygame.K_s] == False and playerMovementKeysDown[pygame.K_s] == True):
-                keysUp.append(pygame.K_s)
-                playerMovementKeysDown[pygame.K_s] = False # ser new value of False
-            if(type(keyDownIndex) != list and keys[pygame.K_d] == False and playerMovementKeysDown[pygame.K_d] == True):
-                keysUp.append(pygame.K_d)
-                playerMovementKeysDown[pygame.K_d] = False # ser new value of False
-            if(type(keyDownIndex) == list and keys[keyDownIndex[0]] == False and keys[keyDownIndex[1] == False and playerMovementKeysDown[keyDownIndex[0]]] == True and playerMovementKeysDown[keyDownIndex[1]] == True): # if index is a list of combinations of number
-                keysUp.append(keyDownIndex[0])
-                keysUp.append(keyDownIndex[1])
-                playerMovementKeysDown[keyDownIndex][0] = False # index by list and set
-                playerMovementKeysDown[keyDownIndex][1] = False
+            if(type(keyIndex) != list and keyIndex in playerMovementKeysDown and pygame.K_w in keysDownBefore):
+                keysUp.append(keyIndex)
+            if(type(keyIndex) == list and (keyIndex[0] in playerMovementKeysDown or keyIndex[1] in playerMovementKeysDown) and keys[keyIndex[0]] == False and keys[keyIndex[1]] == False and playerMovementKeysDown[keyIndex[0]] == True and playerMovementKeysDown[keyIndex[1]] == True): # if index is a list of combinations of number
+                keysUp.append(keyIndex[0])
+                keysUp.append(keyIndex[1])
+
 
     # qtyKeysUp = len(keysUp) # quantity 
-    keysDown = [] # list of keys down
-     
-    for keyDownIndex in playerMovementKeysDown.keys():
-        keyDownValue = playerMovementKeysDown[keyDownIndex]
-        if((type(keyDownIndex) != list) and keyDownValue == True):
-            keysDown.append(keyDownIndex) # append pygame index
-        elif((type(keyDownIndex) == list) and keyDownValue[0] == True and keyDownValue[1] == True):
-            keysDown.append(keyDownIndex) # append pygame indexes
     
-    qtyKeysDown = len(keysDown) # quantity
-    if(qtyKeysDown == 0): # stop moving
+    
+    
+    allKeys = pygame.key.get_pressed()
+    
+    movementKeysDownCurrently = []
+
+    keyIndex = 0
+    for keyIndex in movementKeys:
+        # If key index is in keys up and it is currently down
+        #print(keyDownIndex)
+        keyValue = allKeys[keyIndex]
+        if(keyValue == True):
+            movementKeysDownCurrently.append(keyIndex)
+        keyIndex += 1
+
+    
+    AMovementKeyWasDownBefore : bool = False
+    
+    
+    if(len(keysDownBefore) > 0):
+        AMovementKeyWasDownBefore = True
+    """
+    # WASD keys r up
+    if(gameControls == Controls.WASD and AKeyWasDownBefore == False and not(pygame.K_w in keysUp and pygame.K_a in keysUp and pygame.K_s in keysUp and pygame.K_d in keysUp)):
+        return
+    """
+
+
+
+    if(gameControls == Controls.WASD and AMovementKeyWasDownBefore == False and len(movementKeysDownCurrently) == 0):
+        return # end here
+    """
+    print(gameControls == Controls.WASD and AKeyWasDownBefore == False and allKeys[pygame.K_w] == False and allKeys[pygame.K_w] == False and allKeys[pygame.K_w] == False and allKeys[pygame.K_w] == False)
+    if(gameControls == Controls.WASD and AKeyWasDownBefore == False and allKeys[pygame.K_w] == False and allKeys[pygame.K_w] == False and allKeys[pygame.K_w] == False and allKeys[pygame.K_w] == False):
+        return
+    """
+
+    qtyKeysDown = len(movementKeysDownCurrently) # quantity
+    if(qtyKeysDown == 0 ): # stop moving
         handlePlayerMovement(Direction.none)
     if(qtyKeysDown > 0): # still might be moving
         handleKeysDown() # keep moving if still keys down
@@ -1149,11 +1277,11 @@ while running:
     if(game.end == False):
         player.Update() # update the player and move if enough time has passed. Func retunrs True if success
         enemyController.Update()
-        projectileHandler.UpdateProjectiles()
+        projectileHandler.UpdateProjectiles(player, enemyController.enemies)
     # render snake below text in case player decides to go under text
     player.Render()
-    enemyController.RenderEnemies()
     projectileHandler.RenderProjectiles()
+    enemyController.RenderEnemies()
     # player.RenderHitbox() # debugging
     if(game.end == False):
         pass
