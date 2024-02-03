@@ -329,7 +329,7 @@ class ProjectileHandler():
                         enemy.projectile = None
                         player.hp -= enemy.damage
 
-                        print("Player hit by enemy")
+                        #print("Player hit by enemy")
                 # else, check for a hit with any enemy hitboxes
                 else:
                     for enemy in enemies:
@@ -337,7 +337,8 @@ class ProjectileHandler():
                             projectile.hasCollided = True
                             self.RemoveProjectile(projectile) # remove from list
                             enemy.hp -= player.damage
-                            print("Enemy hit by player")
+                            player.kills += 1 # got a kill
+                            #print("Enemy hit by player")
 
         #lengthOfEnemyProjectiles = len(enemyProjectiles)
         #if(lengthOfEnemyProjectiles == 0 and self.game.level > self.startingLevel):
@@ -377,6 +378,7 @@ class PlayerController():
     hitboxColour = (151, 236, 239) # For debugging
     #hitboxOutlineSize = 3 # For debugging, width of outline in pixels
     hp = 100 # health
+    maxHp = None # for rendering. Initiased in init
     directionBeforeRest : int = None # intended to be set before direction.none is made current direction
     projectileCooldown : int = 500 # how may millis until player can fire
     timeSinceLastShoot : int = 0 # in millis
@@ -405,6 +407,7 @@ class PlayerController():
         self.screen = screen
         self.game = game
         game.player = self # set player
+        self.maxHp = self.hp # set the max as current before enemies
 
     # takes in real coords of a positio n
     def IsOutOfScreenBounds(self , desiredPosition : tuple) -> bool:
@@ -588,6 +591,15 @@ class PlayerController():
         killsTextlocation = (padding[0],padding[1]) # top left (0,0) + padding. (0,0) can be omitted
         self.screen.blit(killsTextSurface, killsTextlocation) # render text to screen
     
+    def RenderHPText(self) -> None:
+        hpTextFontSize = self.killsTextFontSize
+        hpText = "HP: "+str(self.hp)+"/"+str(self.maxHp)
+        hpTextObject = pygame.font.SysFont("Arial Nova",hpTextFontSize)
+        hpTextSurface = hpTextObject.render(hpText, True, "white")
+        padding = self.killsTextPadding
+        hpTextLocation = (padding[0], padding[1]+self.killsTextFontSize+padding[1]) # put below kills text
+        self.screen.blit(hpTextSurface, hpTextLocation)
+
     # Gets the real coord of point of player that is tip
     def GetTipOfPlayer(self) -> tuple:
         playerPosition = self.playerPosition # position of player
@@ -611,7 +623,7 @@ class PlayerController():
         if(currentTime - self.timeSinceLastShoot < self.projectileCooldown):
             print("Not shooting, not enough time has passed. \nTime difference:"+str(currentTime- self.timeSinceLastShoot)+"\nCooldown:"+ str(self.projectileCooldown))
             return
-        print("shooting")
+        #print("shooting")
         tipOfPlayer = self.GetTipOfPlayer()
         playerDirection = self.currentDirection
         if(playerDirection == Direction.none and self.directionBeforeRest != None):
@@ -772,6 +784,7 @@ class EnemyController():
     enemiesLeft = 1 # start
     projectileHandler = None 
     enemyProjectileSpeed = 240 # speed in pixels/second
+    #generatingEnemies : bool = False # whether or not, currently generating enemies
 
     def __init__(self, game : GameController, player : PlayerController, projectileHandler : ProjectileHandler ) -> None:
         self.game = game
@@ -830,10 +843,18 @@ class EnemyController():
         qtyToGenerate = round(qtyToGenerate) # Make sure it is a whole number
         game : GameController = self.game
         gameMap : GameMap = game.gameMap
+        playerPosition = player.playerPosition # in real coords
+        # make sure the data is tuple
+        if(type(playerPosition) != tuple):
+            player.playerPosition = tuple(playerPosition) # convert to tuple
         playerPosAsTile = player.GetPositionAsTile() # player position as tile coord
         screenSize = game.screen.get_size()
 
+        print("----")
+        print("Generating "+str(qtyToGenerate)+" enemies")
+
         if(qtyToGenerate != 0):
+            #self.generatingEnemies = True
             # iterate through generation
             for generationIndex in range(0, qtyToGenerate):
 
@@ -849,8 +870,15 @@ class EnemyController():
                 game : GameController = self.game
                 gameMap : GameMap = game.gameMap
                 tileSize = gameMap.tileSize
+                rowsUpdated : bool = False
                 if(totalRows == 0):
                     gameMap.UpdateRows(screenSize[0], screenSize[1])
+                    rowsUpdated = True
+                if(rowsUpdated == True):
+                    totalRows = gameMap.rows # Get total possible rows as an int
+                    rowSize = gameMap.rowSize # How many tiles there r per row
+                    endRow = totalRows - 1 # the row and column to end on
+                    endColumn = endRow # same same, the width and height should be equal or square
                 if(totalRows == 0): # still zero despite being updated
                     return 
                 for rowIndex in range(0,totalRows):
@@ -925,20 +953,20 @@ class EnemyController():
                 # all of the chosen row indexes 
                 chosenRowindexes = [] 
 
-                #range is eclusive. Index is useless
-                for index in range(0, qtyToGenerate):
-                    #choose a random range
-                    genRangesLength = len(generationRanges)
-                    chosenRowIndex = random.randint(startRow-1, endRow - 1)
-                    chosenRowindexes.append(chosenRowIndex)
+                # For this iteration, generate 1 enemy
+
+                #choose a random range
+                #genRangesLength = len(generationRanges)
+                chosenRowIndex = random.randint(startRow-1, endRow - 1)
+                chosenRowindexes.append(chosenRowIndex)
 
                 # loop thru all rows
-                for chosenRowIndex in chosenRowindexes: 
-                    rowRangeList = generationRanges[chosenRowIndex]
-                    rowRangeLength = len(rowRangeList) # length of list of elements in row range list. W
-                    chosenRowRange : tuple = rowRangeList[random.randint(0, rowRangeLength-1)] # a tuple of potential ranges
-                    enemyRealPosition = GameMap.tileCoordsToReal((chosenRowIndex, random.randint(chosenRowRange[0],chosenRowRange[1])), tileSize) # the tile to real coords'
-                    self.SpawnEnemy(enemyRealPosition) # add the fruit to map
+                
+                rowRangeList = generationRanges[chosenRowIndex]
+                rowRangeLength = len(rowRangeList) # length of list of elements in row range list. W
+                chosenRowRange : tuple = rowRangeList[random.randint(0, rowRangeLength-1)] # a tuple of potential ranges
+                enemyRealPosition = GameMap.tileCoordsToReal((chosenRowIndex, random.randint(chosenRowRange[0],chosenRowRange[1])), tileSize) # the tile to real coords'
+                self.SpawnEnemy(enemyRealPosition) # add the fruit to map
 
                 
 
@@ -946,6 +974,7 @@ class EnemyController():
                 currentLevel = game.level # get level
                 self.lastLevelLoaded = currentLevel # finally set loaded objects
             self.enemiesLeft = qtyToGenerate # set enemies left
+            #self.generatingEnemies = False
 
     def RenderEnemies(self, renderHitboxes : bool = False):
         for enemy in self.enemies:
@@ -993,8 +1022,8 @@ class EnemyController():
 
         
 
-        print("---")
-        print(len(self.enemies))
+        #print("---")
+        #print(len(self.enemies))
         # If last level is not the same as curerent level
         if(lastLevelLoaded != currentLevel):
             
@@ -1004,9 +1033,9 @@ class EnemyController():
             self.GenerateEnemies(qtyToGenerate)
             self.lastLevelLoaded = currentLevel
         
-        print(len(self.enemies))
+        #print(len(self.enemies))
         enemiesLength = len(self.enemies)
-        print(len(self.enemies))
+        #print(len(self.enemies))
         # no more enemies
         if(enemiesLength == 0):
             self.game.level += 1 # go to next level
@@ -1267,7 +1296,7 @@ while running:
     # pygame.QUIT event means the user clicked X to close your window
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
-            print("Got quit event")
+            #print("Got quit event")
             running = False
         elif event.type == pygame.KEYDOWN: # handle key down
             handleKeysDown() # pass in key event and call func
@@ -1289,6 +1318,7 @@ while running:
     #fruitController.renderFruits()
     if(game.end == False):
         player.RenderKillsText()
+        player.RenderHPText()
     else: # ended ==  True
         game.RenderEndGame() 
 
