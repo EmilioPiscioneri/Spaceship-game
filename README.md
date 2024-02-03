@@ -9,3 +9,4 @@
  - Firing towards player from enemy doesn't take into account player rotations to calculate midpoint, however you can't notice this with how fast the projectile is
  - You can go into enemies. This was a design choice as I thought it was more risky to go right into enemies. Also, I can't be stuffed preventing collisions.
  - There is no retry button or key.
+ - When a new level loads (including first). The enemy fires straight away. This is a buh
